@@ -228,6 +228,29 @@ export interface UnitPlacement {
    * structure.  true forces the mobile-hull treatment.
    */
   mobile?: boolean | null
+  /**
+   * Building floorplan (from the FBI FootprintX/FootprintZ + yardmap). A
+   * building LEVELS the drawn terrain under its footprint so its groundplate
+   * sits above a slope instead of sinking into the hill — a render-only,
+   * per-unit override reverted when the unit is removed/destroyed. x/z are in
+   * TA footprint cells (1 cell = 16 world units unless cellWU overrides);
+   * height pins an explicit flatten level (default: the min ground under it).
+   * Only applied to structures (mobile:false, or an inferred never-moved
+   * grounded unit).
+   */
+  footprint?: FootprintSpec | null
+}
+
+/** A building's terrain-flattening footprint (see UnitOptions.footprint). */
+export interface FootprintSpec {
+  /** Footprint width in TA footprint cells (FootprintX). */
+  x: number
+  /** Footprint depth in TA footprint cells (FootprintZ). */
+  z: number
+  /** World units per footprint cell (default 16 — half a TA tile). */
+  cellWU?: number
+  /** Explicit raw flatten height; default is the min ground under the footprint. */
+  height?: number
 }
 
 export interface SnapshotPieceState {
@@ -274,6 +297,12 @@ export interface SnapshotUnit {
    * change across snapshots reads as a structure.  true forces mobility.
    */
   mobile?: boolean | null
+  /**
+   * Building floorplan — LEVELS the drawn terrain under the footprint so the
+   * base sits above a slope (render-only, reverted on removal/death). x/z in
+   * TA footprint cells (FootprintX/FootprintZ). Only applied to structures.
+   */
+  footprint?: FootprintSpec | null
   /** dead:true on a live unit triggers unitDeath(id, { severity: deathSeverity, corpse, heapCorpse, impactDir, impactMag }) once. */
   dead?: boolean
   deathSeverity?: number

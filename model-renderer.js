@@ -3104,24 +3104,40 @@ export class ModelRenderer {
     }
     const xe = edges(w), ze = edges(h)
     const cols = xe.length - 1, rows = ze.length - 1
-    const verts = new Float32Array(cols * rows * 18)
-    const Y = (cx, cz) => heights[Math.min(cz, h - 1) * w + Math.min(cx, w - 1)] * heightScale
-    let o = 0
-    for (let r = 0; r < rows; r++) {
-      const cz0 = ze[r], cz1 = ze[r + 1]
-      const z0 = originZ + cz0 * cellWU, z1 = originZ + cz1 * cellWU
-      for (let c = 0; c < cols; c++) {
-        const cx0 = xe[c], cx1 = xe[c + 1]
-        const x0 = originX + cx0 * cellWU, x1 = originX + cx1 * cellWU
-        const y00 = Y(cx0, cz0), y10 = Y(cx1, cz0), y01 = Y(cx0, cz1), y11 = Y(cx1, cz1)
-        verts[o++] = x0; verts[o++] = y00; verts[o++] = z0
-        verts[o++] = x1; verts[o++] = y10; verts[o++] = z0
-        verts[o++] = x1; verts[o++] = y11; verts[o++] = z1
-        verts[o++] = x0; verts[o++] = y00; verts[o++] = z0
-        verts[o++] = x1; verts[o++] = y11; verts[o++] = z1
-        verts[o++] = x0; verts[o++] = y01; verts[o++] = z1
+    // Surface sampler over the SOURCE-resolution height field. Built here
+    // (before the mesh) so the drawn mesh and the CPU sampler answer the SAME
+    // surface — including any footprint-flatten overrides a building installs
+    // (setFootprintFlatten): the mesh Y is regenerated from the sampler's
+    // override-aware rawHeightAt, so a levelled footprint flattens the DRAWN
+    // terrain, not just the height a grounded unit clamps to.
+    const sampler = createTerrainSampler({ heights, w, h, cellWU, heightScale, originX, originZ })
+    // Vertex height in WORLD-Y at a cell corner, via the sampler so footprint
+    // overrides apply. rawHeightAt takes world XZ; feed the corner's world pos.
+    const Y = (cx, cz) => sampler.rawHeightAt(originX + cx * cellWU, originZ + cz * cellWU) * heightScale
+    // _fillTerrainVerts (re)generates the whole mesh vertex buffer from the
+    // current (override-aware) surface. Called on install and whenever a
+    // footprint override is added/removed. Cheap enough for placement events
+    // (one bufferData), which are infrequent vs. per-frame draws.
+    const fillTerrainVerts = (buf) => {
+      let o = 0
+      for (let r = 0; r < rows; r++) {
+        const cz0 = ze[r], cz1 = ze[r + 1]
+        const z0 = originZ + cz0 * cellWU, z1 = originZ + cz1 * cellWU
+        for (let c = 0; c < cols; c++) {
+          const cx0 = xe[c], cx1 = xe[c + 1]
+          const x0 = originX + cx0 * cellWU, x1 = originX + cx1 * cellWU
+          const y00 = Y(cx0, cz0), y10 = Y(cx1, cz0), y01 = Y(cx0, cz1), y11 = Y(cx1, cz1)
+          buf[o++] = x0; buf[o++] = y00; buf[o++] = z0
+          buf[o++] = x1; buf[o++] = y10; buf[o++] = z0
+          buf[o++] = x1; buf[o++] = y11; buf[o++] = z1
+          buf[o++] = x0; buf[o++] = y00; buf[o++] = z0
+          buf[o++] = x1; buf[o++] = y11; buf[o++] = z1
+          buf[o++] = x0; buf[o++] = y01; buf[o++] = z1
+        }
       }
+      return buf
     }
+    const verts = fillTerrainVerts(new Float32Array(cols * rows * 18))
     const vbo = gl.createBuffer()
     gl.bindBuffer(gl.ARRAY_BUFFER, vbo)
     gl.bufferData(gl.ARRAY_BUFFER, verts, gl.STATIC_DRAW)
@@ -3237,8 +3253,13 @@ export class ModelRenderer {
       clipRect: null, clipCenter: null,
       // CPU-side surface sampler over the SOURCE-resolution height field —
       // terrainHeightAt / terrainNormalAt answer from it so grounded units,
-      // wrecks and ground picks sit exactly on the drawn mesh.
-      sampler: createTerrainSampler({ heights, w, h, cellWU, heightScale, originX, originZ }),
+      // wrecks and ground picks sit exactly on the drawn mesh.  Also owns the
+      // footprint-flatten overrides (setFlatten / clearFlatten); the mesh is
+      // regenerated from it via fillTerrainVerts on each change.
+      sampler,
+      // Retained for the footprint-flatten mesh rebuild: the vertex scratch
+      // buffer + the fill closure that reads the override-aware surface.
+      verts, fillTerrainVerts,
     }
     if (clipActive) {
       // Seed the cache on the map centre; draw() re-centres it on the camera.
@@ -3363,6 +3384,62 @@ export class ModelRenderer {
   terrainNormalAt(x, z) {
     const mt = this._mapTerrain
     return mt && mt.sampler ? mt.sampler.normalAt(x, z) : [0, 1, 0]
+  }
+
+  // setFootprintFlatten LEVELS the drawn terrain under a building's floorplan
+  // so its groundplate sits just above ground on a slope instead of sinking
+  // into the hill.  In TA a placed building flattens the cells under its
+  // FootprintX/FootprintZ yardmap; this reproduces that as a RENDER-ONLY,
+  // NON-PERSISTENT override keyed by the unit's id — the source heightmap is
+  // never touched, and clearFootprintFlatten reverts the ground (so a wreck /
+  // crater shows real relief).  `rect` is the footprint in WORLD units
+  // ({ x, z, w, h } — corner + extent); an explicit raw `height` overrides the
+  // default (the MIN source height under the footprint).  Both the CPU sampler
+  // (grounded-unit clamp, ground picks) and the DRAWN mesh flatten, in lockstep.
+  // No-op with no battlefield installed.  Returns true when an override changed
+  // the surface (so the caller can request a redraw).
+  setFootprintFlatten(id, rect) {
+    const mt = this._mapTerrain
+    if (!mt || !mt.sampler || typeof mt.sampler.setFlatten !== 'function') return false
+    const prev = mt.sampler.clearFlatten(id)
+    const entry = mt.sampler.setFlatten(id, rect || {})
+    if (!entry && !prev) return false
+    // Only rebuild the mesh when the levelled region actually changed.
+    if (!this._flattenEntryEqual(prev, entry)) this._rebuildTerrainMesh()
+    return true
+  }
+
+  // clearFootprintFlatten removes a building's footprint override (on removal
+  // / death), reverting the levelled cells to real relief.  Returns true when
+  // something was cleared.
+  clearFootprintFlatten(id) {
+    const mt = this._mapTerrain
+    if (!mt || !mt.sampler || typeof mt.sampler.clearFlatten !== 'function') return false
+    const removed = mt.sampler.clearFlatten(id)
+    if (!removed) return false
+    this._rebuildTerrainMesh()
+    return true
+  }
+
+  // _flattenEntryEqual — cheap struct compare so a re-place at the same cell
+  // rect + level skips a needless mesh rebuild.
+  _flattenEntryEqual(a, b) {
+    if (a === b) return true
+    if (!a || !b) return false
+    return a.cx0 === b.cx0 && a.cz0 === b.cz0 && a.cx1 === b.cx1 && a.cz1 === b.cz1 && a.height === b.height
+  }
+
+  // _rebuildTerrainMesh regenerates the battlefield mesh VBO from the current
+  // override-aware surface (fillTerrainVerts reads the sampler).  Cheap: one
+  // bufferData, run only on footprint add/remove, not per frame.
+  _rebuildTerrainMesh() {
+    const mt = this._mapTerrain
+    if (!mt || !mt.fillTerrainVerts || !mt.verts || !mt.vbo) return
+    const gl = this.gl
+    mt.fillTerrainVerts(mt.verts)
+    gl.bindBuffer(gl.ARRAY_BUFFER, mt.vbo)
+    gl.bufferData(gl.ARRAY_BUFFER, mt.verts, gl.STATIC_DRAW)
+    this.requestRedraw()
   }
 
   // ── Frame: reflection pass for Studio Mode on Sea ───────────

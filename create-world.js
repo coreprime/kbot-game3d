@@ -70,7 +70,7 @@ import { raycastTerrain } from './terrain-los.js'
 import { fragmentGeometry, targetFragmentCount } from './debris-fragments.js'
 import { Piece } from './piece.js'
 import { Model } from './model.js'
-import { planetEnvironment } from './map-terrain.js'
+import { planetEnvironment, MAP_CELL_WU } from './map-terrain.js'
 import { ExplosionManager } from './explosion-fx.js'
 import { PULSE_LIGHT_ENERGY_BUDGET } from './performance.js'
 
@@ -332,6 +332,51 @@ export async function createWorld(canvas, {
     (typeof renderer.terrainHeightAt === 'function' ? renderer.terrainHeightAt(x, z) : 0)
   const terrainNormalAt = (x, z) =>
     (typeof renderer.terrainNormalAt === 'function' ? renderer.terrainNormalAt(x, z) : [0, 1, 0])
+
+  // _unitIsBuilding — whether a unit should flatten the terrain under it.
+  // A building is a structure (mobile:false, or a grounded unit that has
+  // never moved — the same inference unitRocksOnImpact uses) that carries a
+  // footprint.  Mobile units and units with no footprint never flatten.
+  const _unitIsBuilding = (u) => {
+    if (!u || !u.footprint) return false
+    if (u.mobile === true) return false
+    if (u.mobile === false) return true
+    // No explicit flag: treat a grounded, never-moved unit as a structure.
+    return !!u.grounded && !u._moved
+  }
+
+  // _syncFootprintFlatten installs / refreshes / clears a building's
+  // footprint-flatten override on the renderer (see setFootprintFlatten):
+  // buildings LEVEL the drawn terrain under their floorplan so the base sits
+  // above a slope.  Keyed by unit id and reverted when the unit stops being a
+  // flattening building (removed, destroyed, or it turns out to be mobile), so
+  // the change is non-persistent.  Footprint dims are in TA footprint cells
+  // (FootprintX/FootprintZ), one cell = MAP_CELL_WU world units; the building
+  // origin (u.x, u.z) is its centre, so the world rect is centred there.
+  const _syncFootprintFlatten = (u) => {
+    if (typeof renderer.setFootprintFlatten !== 'function') return
+    if (!u) return
+    if (!_unitIsBuilding(u)) {
+      if (u._flattened) { renderer.clearFootprintFlatten(u.id); u._flattened = false }
+      return
+    }
+    const fp = u.footprint
+    const cellW = +fp.cellWU > 0 ? +fp.cellWU : MAP_CELL_WU
+    const fw = Math.max(1, +fp.x || +fp.w || 1) * cellW
+    const fh = Math.max(1, +fp.z || +fp.h || 1) * cellW
+    const rect = { x: u.x - fw / 2, z: u.z - fh / 2, w: fw, h: fh }
+    if (fp.height != null) rect.height = +fp.height
+    renderer.setFootprintFlatten(u.id, rect)
+    u._flattened = true
+  }
+
+  // _clearFootprintFlatten reverts a unit's footprint override unconditionally
+  // (removal / death).  Safe to call for a unit that never flattened.
+  const _clearFootprintFlatten = (id) => {
+    if (typeof renderer.clearFootprintFlatten === 'function') renderer.clearFootprintFlatten(id)
+    const u = units.get(id)
+    if (u) u._flattened = false
+  }
 
   // _unitPose composes a unit's final render transform: grounded units clamp
   // Y to the terrain surface, slope tilt + the hit-rock impulse ride the
@@ -1076,11 +1121,11 @@ export async function createWorld(canvas, {
     // damage smoke), rank (0..5 veteran stars, shown only while the
     // health bar shows), mobile (false marks a
     // structure — no hit-rock; omitted → inferred, see unitImpulse).
-    async addUnit(name, { id = null, x = 0, y = 0, z = 0, heading = null, side = null, teamColor = null, buildPercent = undefined, grounded = false, hp01 = null, rank = 0, air = false, hover = false, naval = false, mobile = null, redraw = true } = {}) {
+    async addUnit(name, { id = null, x = 0, y = 0, z = 0, heading = null, side = null, teamColor = null, buildPercent = undefined, grounded = false, hp01 = null, rank = 0, air = false, hover = false, naval = false, mobile = null, footprint = null, redraw = true } = {}) {
       const base = await loadBaseModel(name)
       const unitId = id != null ? id : nextId++
       if (unitId >= nextId && typeof unitId === 'number') nextId = unitId + 1
-      units.set(unitId, {
+      const rec = {
         id: unitId,
         name,
         model: base.cloneForInstance(),
@@ -1093,12 +1138,18 @@ export async function createWorld(canvas, {
         hover: !!hover,
         naval: !!naval,
         mobile: mobile == null ? null : !!mobile,
+        // footprint: { x, z } in TA footprint cells (FootprintX/FootprintZ),
+        // optional cellWU + explicit flatten height — a building levels the
+        // terrain under it (see _syncFootprintFlatten).
+        footprint: footprint || null,
         _posInit: true, // addUnit placement is explicit — later changes count as motion
         hp01,
         rank: rank | 0,
         teamColor: teamColor || (side != null ? teamColorForSide(side) : null),
         buildPercent,
-      })
+      }
+      units.set(unitId, rec)
+      _syncFootprintFlatten(rec)
       // redraw:false skips the immediate frame — bulk callers (e.g. a
       // replayer preloading every unit type) otherwise pay one full
       // scene draw per add/remove, which with a battlefield terrain
@@ -1108,6 +1159,7 @@ export async function createWorld(canvas, {
     },
 
     removeUnit(id, { redraw = true } = {}) {
+      _clearFootprintFlatten(id)
       units.delete(id)
       if (redraw && !renderer.running) world.step(0)
     },
@@ -1124,6 +1176,9 @@ export async function createWorld(canvas, {
       if (y != null) u.y = y
       if (z != null) u.z = z
       if (heading != null) u.headingRad = heading
+      // A building that moved is no longer flattening-eligible (it's mobile);
+      // one that stayed put refreshes its footprint at the new origin.
+      _syncFootprintFlatten(u)
       if (!renderer.running) world.step(0)
     },
 
@@ -1208,6 +1263,10 @@ export async function createWorld(canvas, {
           if (!renderer.running) world.step(0)
         }).catch(() => { /* no feature catalogue — terrain still installed */ })
       }
+      // A fresh battlefield starts with no footprint overrides — re-install
+      // them for any building already placed so the new terrain flattens under
+      // it too (the previous terrain's override map went with the old mesh).
+      for (const u of units.values()) { u._flattened = false; _syncFootprintFlatten(u) }
       if (!renderer.running) world.step(0)
     },
 
@@ -1270,6 +1329,8 @@ export async function createWorld(canvas, {
     //                                     //   vertical until buildPercent hits 100
     //       grounded?,                    // clamp render Y to terrain + slope-tilt
     //       mobile?,                      // false = structure (no hit-rock); omitted → inferred
+    //       footprint?: { x, z, cellWU?, height? },  // building floorplan in
+    //                                     //   TA footprint cells — flattens terrain under it
     //       hp01?,                        // 0..1 health (status bar + damage smoke)
     //       rank?,                        // 0..5 veteran stars (rendered only while damaged)
     //       dead?, deathSeverity?, corpse?, heapCorpse?,  // see unitDeath()
@@ -1381,6 +1442,11 @@ export async function createWorld(canvas, {
         if (su.hp01 != null) u.hp01 = su.hp01
         if (su.rank != null) u.rank = su.rank | 0
         if (su.buildPercent != null) u.buildPercent = su.buildPercent
+        // footprint: { x, z } in TA footprint cells — a building flattens the
+        // terrain under it. Sync after position/mobile/grounded are updated so
+        // the flatten tracks the current origin + building status.
+        if (su.footprint !== undefined) u.footprint = su.footprint || null
+        _syncFootprintFlatten(u)
         // buildSpin: a nascent unit riding a factory build pad turns slowly
         // about vertical while under construction (the classic TA "unit on
         // the spinning pad").  Off for con-built structures, which stay put.
@@ -1428,7 +1494,7 @@ export async function createWorld(canvas, {
         }
       }
       for (const id of units.keys()) {
-        if (!seen.has(id)) units.delete(id)
+        if (!seen.has(id)) { _clearFootprintFlatten(id); units.delete(id) }
       }
       projectiles = []
       for (const sp of snapshot.projectiles || []) {
@@ -1589,6 +1655,9 @@ export async function createWorld(canvas, {
           if (!disposed && corpses.get(id) === rec) rec.model = base.cloneForInstance()
         }).catch(() => corpses.delete(id))
       }
+      // Revert any footprint-flatten so the wreck / crater shows the REAL
+      // relief again — the flattened pad was a live-building convenience only.
+      _clearFootprintFlatten(id)
       units.delete(id)
       if (redraw && !renderer.running) world.step(0)
       return true

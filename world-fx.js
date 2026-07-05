@@ -74,8 +74,23 @@ export function normalizePackWeaponDef(id, def) {
     waterWeapon: !!def.waterWeapon,
     accelerationWU: +def.accelerationWU || 0,
     flightTimeSec: +def.flightTimeSec || 0,
+    // Vertical-launch missile (pack format v6; TDF vlaunch=1): the shot
+    // leaves the tube straight up and climbs before its guidance turns it
+    // onto the target. weaponTimerSec (TDF weapontimer=) bounds the climb.
+    vlaunch: !!def.vlaunch,
+    weaponTimerSec: +def.weaponTimerSec || 0,
   }
 }
+
+// VLAUNCH_MIN_CLIMB_WU / _MAX — the ascent height a vertical-launch missile
+// climbs before its guidance turns it onto the target, in world units.  Real
+// TA climbs on the shot's start velocity + acceleration under weapontimer;
+// the replayer has no per-frame guidance sim, so it launches the shot with a
+// dominant vertical velocity and lets the existing guided-steering integrator
+// pull it over — this range bounds the resulting apex so a short-range shot
+// still rises visibly and a long-range one doesn't rocket off-screen.
+export const VLAUNCH_MIN_CLIMB_WU = 60
+export const VLAUNCH_MAX_CLIMB_WU = 220
 
 // TA weapon turnrate= is in TA angle units per second (65536 = 2π).
 export const TA_TURN_TO_RAD = (Math.PI * 2) / 65536
@@ -260,10 +275,31 @@ export function spawnWeaponVisual({
     const ballistic = !!(w && (w.ballistic || w.dropped))
     const guided = !!(w && w.guidance && w.turnRateRad > 0)
     const torpedo = !!(w && w.waterWeapon)
+    // Vertical-launch: only meaningful for a guided shot (something has to
+    // pull it back onto the target after the climb). A vlaunch weapon with no
+    // guidance falls through to the straight-line launch.
+    const vlaunch = !!(w && w.vlaunch) && guided && !torpedo
     const waterY = env && Number.isFinite(env.waterY) ? env.waterY : null
     let vel
     let flightSec
-    if (ballistic) {
+    if (vlaunch) {
+      // Leave the tube pointing (near-)straight UP at the muzzle speed, so the
+      // missile climbs first; the guided-steering integrator in stepModelShots
+      // then turns it over onto the target at the weapon's turn rate, tracing
+      // the rise-then-curve arc TA renders. A tiny horizontal bias toward the
+      // target breaks the exactly-vertical degeneracy (steering a velocity that
+      // is perfectly anti-parallel to nothing is undefined) and seeds the turn.
+      const horiz = Math.hypot(dx, dz) || 1
+      const bias = 0.06 // ~3.5° off vertical toward the target
+      vel = [
+        (dx / horiz) * v * bias,
+        v * Math.sqrt(Math.max(0, 1 - bias * bias)),
+        (dz / horiz) * v * bias,
+      ]
+      // Life: the climb + curve is a longer path than the straight chord, so
+      // give it the guided headroom plus the climb time (apex/v).
+      flightSec = dist / v + Math.min(VLAUNCH_MAX_CLIMB_WU, Math.max(VLAUNCH_MIN_CLIMB_WU, horiz * 0.25)) / v
+    } else if (ballistic) {
       // Lofted launch solved to LAND AT THE TARGET: pick the time of
       // flight from the horizontal distance at muzzle speed, then give
       // the arc exactly the vertical speed gravity needs to bring it

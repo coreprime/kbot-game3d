@@ -43,12 +43,50 @@
 export function createTerrainSampler({ heights, w, h, cellWU = 16, heightScale = 1, originX = 0, originZ = 0 }) {
   if (!heights || !(w > 0) || !(h > 0)) {
     const flat = () => 0
-    return { heightAt: flat, rawHeightAt: flat, normalAt: () => [0, 1, 0] }
+    const noop = () => {}
+    return {
+      heightAt: flat, rawHeightAt: flat, normalAt: () => [0, 1, 0],
+      setFlatten: noop, clearFlatten: noop, flattenCount: () => 0,
+    }
+  }
+
+  // Footprint-flatten overrides — a building levels the DRAWN terrain under
+  // its floorplan so its base sits just above ground on a slope instead of
+  // sinking into the hill.  This is a RENDER-ONLY, NON-PERSISTENT layer: the
+  // source `heights` array is never mutated, each override is keyed by the
+  // placing unit's id, and clearing it (on removal / death) reverts the cell
+  // to real relief so the crater shows the true ground.  Each entry is a cell
+  // rectangle [cx0..cx1] × [cz0..cz1] pinned to a single raw height.
+  const overrides = new Map()
+
+  // overrideAt returns the flatten height covering vertex (cx, cz), or null.
+  // The MAX across overlapping footprints wins so a building never re-buries a
+  // neighbour's flattened pad.
+  const overrideAt = (cx, cz) => {
+    if (overrides.size === 0) return null
+    let hgt = null
+    for (const o of overrides.values()) {
+      if (cx >= o.cx0 && cx <= o.cx1 && cz >= o.cz0 && cz <= o.cz1) {
+        if (hgt === null || o.height > hgt) hgt = o.height
+      }
+    }
+    return hgt
   }
 
   // Vertex height in RAW units, clamped to the grid (matches the mesh's
-  // edge-snap: the final column/row reuses the last height sample).
+  // edge-snap: the final column/row reuses the last height sample).  A
+  // footprint-flatten override wins over the source height when present.
   const raw = (cx, cz) => {
+    if (cx < 0) cx = 0; else if (cx > w - 1) cx = w - 1
+    if (cz < 0) cz = 0; else if (cz > h - 1) cz = h - 1
+    const ov = overrideAt(cx, cz)
+    if (ov !== null) return ov
+    return heights[cz * w + cx]
+  }
+
+  // sourceRaw reads the UN-overridden source height (the real relief), so the
+  // flatten level can be chosen from the true ground under a footprint.
+  const sourceRaw = (cx, cz) => {
     if (cx < 0) cx = 0; else if (cx > w - 1) cx = w - 1
     if (cz < 0) cz = 0; else if (cz > h - 1) cz = h - 1
     return heights[cz * w + cx]
@@ -88,5 +126,56 @@ export function createTerrainSampler({ heights, w, h, cellWU = 16, heightScale =
     return [-dyDx * inv, inv, -dyDz * inv]
   }
 
-  return { heightAt, rawHeightAt, normalAt }
+  // setFlatten registers (or replaces) a footprint-flatten override for unit
+  // `id`.  `worldRect` is the footprint in WORLD coordinates
+  // ({ x, z, w, h } — x/z the corner, w/h the extent in world units); the rect
+  // is snapped OUTWARD to whole cells so the whole floorplan is covered.  The
+  // flatten height defaults to the MINIMUM source height under the footprint
+  // (a safe choice: the base sits just above the lowest ground it spans, so no
+  // corner is buried), unless an explicit raw `height` is given.  Returns the
+  // cell rect + chosen height so the caller (renderer) can rebuild that mesh
+  // region and clamp the unit's base to it.
+  const setFlatten = (id, { x, z, w: rw, h: rh, height = null } = {}) => {
+    if (id == null || !(rw > 0) || !(rh > 0)) return null
+    // World rect → inclusive cell rect, snapped outward so the footprint's
+    // edge vertices are levelled too.
+    let cx0 = Math.floor((x - originX) / cellWU)
+    let cz0 = Math.floor((z - originZ) / cellWU)
+    let cx1 = Math.ceil((x + rw - originX) / cellWU)
+    let cz1 = Math.ceil((z + rh - originZ) / cellWU)
+    cx0 = Math.max(0, Math.min(w - 1, cx0))
+    cz0 = Math.max(0, Math.min(h - 1, cz0))
+    cx1 = Math.max(0, Math.min(w - 1, cx1))
+    cz1 = Math.max(0, Math.min(h - 1, cz1))
+    let hgt = height
+    if (hgt === null) {
+      // MIN over the footprint's SOURCE relief — ignore other overrides so the
+      // level tracks the true ground, not a neighbour's pad.
+      hgt = Infinity
+      for (let cz = cz0; cz <= cz1; cz++) {
+        for (let cx = cx0; cx <= cx1; cx++) {
+          const sh = sourceRaw(cx, cz)
+          if (sh < hgt) hgt = sh
+        }
+      }
+      if (!Number.isFinite(hgt)) hgt = 0
+    }
+    const entry = { cx0, cz0, cx1, cz1, height: hgt }
+    overrides.set(id, entry)
+    return entry
+  }
+
+  // clearFlatten removes unit `id`'s footprint override, reverting those cells
+  // to real relief.  Returns the removed entry (for a mesh rebuild) or null.
+  const clearFlatten = (id) => {
+    const entry = overrides.get(id) || null
+    if (entry) overrides.delete(id)
+    return entry
+  }
+
+  return {
+    heightAt, rawHeightAt, normalAt,
+    setFlatten, clearFlatten,
+    flattenCount: () => overrides.size,
+  }
 }

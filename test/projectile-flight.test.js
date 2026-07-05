@@ -95,6 +95,73 @@ test('guided turn rate limits the per-step bearing change', () => {
   assert.ok(turned > maxTurn * 0.5, 'and it does actually steer')
 })
 
+test('vertical-launch missile climbs first, then curves onto the target', () => {
+  // The Wombat's rocket (ARMMH_WEAPON): vlaunch=1, guidance=1, turnrate=24384
+  // (~2.34 rad/s), weaponvelocity=400. It must RISE off the launcher before
+  // turning over onto a target that is level and off to the side.
+  const def = normalizePackWeaponDef('armmh_weapon', {
+    renderType: 1, model: 'armmhmsl', vlaunch: 1, guidance: 1,
+    turnRate: 24384, velocityWU: 400, rangeWU: 670, areaOfEffectWU: 80,
+    weaponTimerSec: 5, flightTimeSec: 10,
+  })
+  assert.ok(def.vlaunch, 'vlaunch flag carried through normalize')
+  const binding = makeBinding()
+  const shots = []
+  const from = [0, 20, 0]
+  const to = [500, 20, 0] // level with the launcher, 500wu to the +X side
+  const res = spawnWeaponVisual({ weapon: def, from, to, binding, modelShots: shots })
+  assert.ok(res.modelShot, 'model plan expected for a vlaunch missile')
+
+  // Immediately after launch the velocity must be dominated by the vertical
+  // component — the missile is going UP, not straight at the target.
+  const s0 = res.modelShot
+  assert.ok(s0.vy > 0, 'launches upward')
+  assert.ok(s0.vy > Math.abs(s0.vx) * 2, `initial climb dominates horizontal (vy=${s0.vy} vx=${s0.vx})`)
+
+  // Track the flight: it must rise well above the launch height, and the
+  // horizontal progress toward the target must LAG the climb early on (proof
+  // of an ascent phase, not a flat diagonal).
+  let peakY = -Infinity
+  let xAtPeak = 0
+  const last = (() => {
+    let prev = null
+    let t = 0
+    while (shots.length && t < 60000) {
+      prev = { x: shots[0].x, y: shots[0].y, z: shots[0].z }
+      if (shots[0].y > peakY) { peakY = shots[0].y; xAtPeak = shots[0].x }
+      stepModelShots(shots, 25, {})
+      t += 25
+    }
+    return prev
+  })()
+  assert.ok(peakY > from[1] + 40, `missile lofts above the launcher (peakY=${peakY})`)
+  // At the apex it has climbed but not yet crossed most of the horizontal gap
+  // — i.e. the climb came before the run-in, not a straight line to target.
+  assert.ok(xAtPeak < to[0] * 0.6, `apex reached before covering the ground (xAtPeak=${xAtPeak})`)
+  // And it still homes on: the guided steering pulls it back down onto target.
+  const miss = Math.hypot(last.x - to[0], last.z - to[2])
+  assert.ok(miss < 40, `vlaunch missile still detonates near the target (miss=${miss})`)
+})
+
+test('a straight (non-vlaunch) guided missile does NOT climb off a level shot', () => {
+  // Same guided weapon WITHOUT vlaunch: fired level at a level target it flies
+  // roughly flat — the ascent is specifically the vlaunch behaviour.
+  const def = normalizePackWeaponDef('m', {
+    renderType: 6, model: 'm', guidance: 1, turnRate: 24384, velocityWU: 400, rangeWU: 670,
+  })
+  const binding = makeBinding()
+  const shots = []
+  spawnWeaponVisual({ weapon: def, from: [0, 20, 0], to: [500, 20, 0], binding, modelShots: shots })
+  let peakY = -Infinity
+  let t = 0
+  while (shots.length && t < 60000) {
+    peakY = Math.max(peakY, shots[0].y)
+    stepModelShots(shots, 25, {})
+    t += 25
+  }
+  assert.ok(peakY < 20 + 20, `flat guided shot stays level (peakY=${peakY})`)
+})
+
 test('torpedo runs below the waterline and splashes on expiry', () => {
   const def = normalizePackWeaponDef('torp', {
     renderType: 6, model: 'torpedo', waterWeapon: 1, velocityWU: 100, rangeWU: 500, areaOfEffectWU: 40,
