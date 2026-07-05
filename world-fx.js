@@ -282,23 +282,31 @@ export function spawnWeaponVisual({
     const waterY = env && Number.isFinite(env.waterY) ? env.waterY : null
     let vel
     let flightSec
+    let vlaunchAscentMs = 0
     if (vlaunch) {
-      // Leave the tube pointing (near-)straight UP at the muzzle speed, so the
-      // missile climbs first; the guided-steering integrator in stepModelShots
-      // then turns it over onto the target at the weapon's turn rate, tracing
-      // the rise-then-curve arc TA renders. A tiny horizontal bias toward the
-      // target breaks the exactly-vertical degeneracy (steering a velocity that
-      // is perfectly anti-parallel to nothing is undefined) and seeds the turn.
+      // Leave the tube pointing straight UP at the muzzle speed, so the missile
+      // climbs first, then hands off to the guided-steering integrator in
+      // stepModelShots which turns it over onto the target — the rise-then-run
+      // arc TA renders. The ascent is a SHORT, bounded climb: it runs for
+      // ascentSec (below) as a pure vertical rise with no homing, so the shot
+      // gains a visible apex without over-climbing. Only when the ascent ends
+      // does the shot re-aim at the target and begin homing, which guarantees
+      // the post-ascent heading points FROM the missile TOWARD the target and
+      // the horizontal closing distance falls monotonically. Steering a
+      // perfectly vertical velocity is degenerate, so the ascent phase (not a
+      // horizontal bias) is what seeds the turn.
       const horiz = Math.hypot(dx, dz) || 1
-      const bias = 0.06 // ~3.5° off vertical toward the target
-      vel = [
-        (dx / horiz) * v * bias,
-        v * Math.sqrt(Math.max(0, 1 - bias * bias)),
-        (dz / horiz) * v * bias,
-      ]
-      // Life: the climb + curve is a longer path than the straight chord, so
-      // give it the guided headroom plus the climb time (apex/v).
-      flightSec = dist / v + Math.min(VLAUNCH_MAX_CLIMB_WU, Math.max(VLAUNCH_MIN_CLIMB_WU, horiz * 0.25)) / v
+      vel = [0, v, 0]
+      // Climb window in world units, clamped so a short-range shot still rises
+      // visibly and a long-range one does not rocket off-screen; weapontimer
+      // (weaponTimerSec) caps it when the pack carries one.
+      let climbWU = Math.min(VLAUNCH_MAX_CLIMB_WU, Math.max(VLAUNCH_MIN_CLIMB_WU, horiz * 0.25))
+      if (w.weaponTimerSec > 0) climbWU = Math.min(climbWU, w.weaponTimerSec * v)
+      const ascentSec = climbWU / v
+      vlaunchAscentMs = ascentSec * 1000
+      // Life: the climb plus the run-in to the target is longer than the
+      // straight chord, so give it the climb time plus the guided headroom.
+      flightSec = ascentSec + dist / v
     } else if (ballistic) {
       // Lofted launch solved to LAND AT THE TARGET: pick the time of
       // flight from the horizontal distance at muzzle speed, then give
@@ -342,6 +350,10 @@ export function spawnWeaponVisual({
       // on proximity (see stepModelShots).
       guided,
       turnRad: guided ? w.turnRateRad : 0,
+      // Vertical-launch ascent: for the first vlaunchAscentMs the shot climbs
+      // straight up with homing suppressed; when it elapses stepModelShots
+      // re-aims the horizontal heading at the target and homing takes over.
+      vlaunchAscentMs,
       tx: to[0], ty: to[1], tz: to[2],
       // Torpedoes run at periscope depth below the sheet.
       torpedo,
@@ -413,9 +425,29 @@ export function stepModelShots(modelShots, dtMs, { onExpire = null, env = null }
   for (let i = 0; i < modelShots.length; i++) {
     const s = modelShots[i]
     s.ageMs += dtMs
+    // Vertical-launch ascent: hold the pure vertical climb (no homing) until
+    // the ascent window elapses. On the first step past it the shot's guidance
+    // "acquires": aim the full-speed velocity straight down the 3D bearing to
+    // the target so the missile leaves the apex already pointed AT the target
+    // (heading, and pitch) rather than steering across from a near-vertical
+    // velocity — which is what made it over-climb and then sail past / flip to
+    // travel away. The guided integrator then only makes small corrections, so
+    // the horizontal closing distance falls monotonically from here.
+    const inAscent = s.vlaunchAscentMs > 0 && s.ageMs < s.vlaunchAscentMs
+    if (s.vlaunchAscentMs > 0 && !inAscent && !s.vlaunchTurned) {
+      s.vlaunchTurned = true
+      const speed = Math.hypot(s.vx, s.vy, s.vz) || 1
+      const bx = s.tx - s.x, by = s.ty - s.y, bz = s.tz - s.z
+      const bLen = Math.hypot(bx, by, bz)
+      if (bLen > 1e-4) {
+        s.vx = (bx / bLen) * speed
+        s.vy = (by / bLen) * speed
+        s.vz = (bz / bLen) * speed
+      }
+    }
     // Guided steering: rotate the velocity toward the target bearing by at
     // most turnRad·dt this step, preserving speed.
-    if (s.guided && s.turnRad > 0 && dt > 0) {
+    if (!inAscent && s.guided && s.turnRad > 0 && dt > 0) {
       const speed = Math.hypot(s.vx, s.vy, s.vz) || 1
       const px = s.tx - s.x, py = s.ty - s.y, pz = s.tz - s.z
       const pLen = Math.hypot(px, py, pz) || 1
@@ -452,6 +484,18 @@ export function stepModelShots(modelShots, dtMs, { onExpire = null, env = null }
       const dTarget = Math.hypot(s.tx - s.x, s.ty - s.y, s.tz - s.z)
       const speed = Math.hypot(s.vx, s.vy, s.vz)
       if (dTarget <= Math.max(4, speed * dt * 1.5)) hit = true
+      // Closest-approach fuze: a missile whose turn rate can't quite pull it
+      // onto a fast/steep target would otherwise sail straight through and fly
+      // off. Once it is within a capture radius (blast-scaled) and its range to
+      // the target starts opening back up, detonate at that closest point
+      // instead of chasing forever.
+      else if (s.ageMs > s.vlaunchAscentMs) {
+        const capture = Math.max(12, (s.aoe || 16) * 0.75)
+        if (dTarget <= capture && s.prevTargetDist != null && dTarget > s.prevTargetDist) {
+          hit = true
+        }
+      }
+      s.prevTargetDist = dTarget
     }
     if (!hit && heightAt && s.vy < 0 && s.y <= heightAt(s.x, s.z)) hit = true
     if (hit || s.ageMs >= s.lifeMs) {

@@ -162,6 +162,60 @@ test('a straight (non-vlaunch) guided missile does NOT climb off a level shot', 
   assert.ok(peakY < 20 + 20, `flat guided shot stays level (peakY=${peakY})`)
 })
 
+test('vlaunch missile never flips backwards: horizontal range to target only decreases after ascent', () => {
+  // Regression proof for the post-ascent backwards-flip: after the vertical
+  // climb the missile must turn ONTO the target and make monotonic horizontal
+  // progress at it — never turn 180° and travel away. Sweep a spread of
+  // horizontally-offset (and slightly up/down) targets around the launcher;
+  // for each, once the ascent window elapses the horizontal distance to the
+  // target must fall step-over-step until the shot detonates on it.
+  const def = normalizePackWeaponDef('armmh_weapon', {
+    renderType: 1, model: 'armmhmsl', vlaunch: 1, guidance: 1,
+    turnRate: 24384, velocityWU: 400, rangeWU: 670, areaOfEffectWU: 80,
+    weaponTimerSec: 5, flightTimeSec: 10,
+  })
+  const from = [0, 20, 0]
+  for (const ang of [0, 45, 90, 135, 180, 225, 270, 315]) {
+    for (const R of [150, 350, 600]) {
+      for (const dh of [-60, 0, 60]) {
+        const to = [
+          R * Math.cos((ang * Math.PI) / 180),
+          20 + dh,
+          R * Math.sin((ang * Math.PI) / 180),
+        ]
+        const binding = makeBinding()
+        const shots = []
+        spawnWeaponVisual({ weapon: def, from, to, binding, modelShots: shots })
+        const s0 = shots[0]
+        assert.ok(s0.vy > 0 && Math.abs(s0.vx) < 1 && Math.abs(s0.vz) < 1,
+          `launches straight up (ang=${ang} R=${R} dh=${dh})`)
+
+        let t = 0
+        let climbed = false
+        let ascentEnded = false
+        let prevHoriz = Math.hypot(from[0] - to[0], from[2] - to[2])
+        while (shots.length && t < 60000) {
+          const s = shots[0]
+          if (s.y > from[1] + 30) climbed = true
+          const horiz = Math.hypot(s.x - to[0], s.z - to[2])
+          if (s.ageMs >= s.vlaunchAscentMs) {
+            // Allow a hair of float slack; the closing distance must not grow.
+            assert.ok(horiz <= prevHoriz + 0.05,
+              `horizontal range to target grew after ascent — backwards flip (ang=${ang} R=${R} dh=${dh}: ${prevHoriz.toFixed(1)}→${horiz.toFixed(1)})`)
+            ascentEnded = true
+          }
+          prevHoriz = horiz
+          stepModelShots(shots, 25, {})
+          t += 25
+        }
+        assert.ok(climbed, `missile climbs during ascent (ang=${ang} R=${R} dh=${dh})`)
+        assert.ok(ascentEnded, `homing phase ran (ang=${ang} R=${R} dh=${dh})`)
+        assert.equal(shots.length, 0, `missile detonates (ang=${ang} R=${R} dh=${dh})`)
+      }
+    }
+  }
+})
+
 test('torpedo runs below the waterline and splashes on expiry', () => {
   const def = normalizePackWeaponDef('torp', {
     renderType: 6, model: 'torpedo', waterWeapon: 1, velocityWU: 100, rangeWU: 500, areaOfEffectWU: 40,
