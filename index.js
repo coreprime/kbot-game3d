@@ -65,6 +65,7 @@ export {
   spawnWeaponVisual,
   stepModelShots,
   modelShotPose,
+  projectileNoseAxis,
   impactBurst,
   resolveDeathPlan,
   damageSmokeIntervalMs,

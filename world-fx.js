@@ -524,6 +524,30 @@ export function modelShotPose(s) {
   return { heading, pitch }
 }
 
+// projectileNoseAxis returns the unit world-space direction the projectile
+// mesh's NOSE ends up pointing once the renderer has posed it, for a shot with
+// the given velocity.  It reproduces exactly the transform the renderer applies
+// to an isProjectile entity — the +π yaw flip that turns the nose-toward-+Z
+// 3DO authoring into game-heading space, followed by the pitch tilt.  Because
+// the yaw flip inverts the local X axis, the pitch is negated so the nose
+// tracks the velocity's vertical component (climb up, dive down) instead of
+// mirroring it.  The nose must point ALONG the velocity, so this is the ground
+// truth the orientation unit test checks against.
+export function projectileNoseAxis(s) {
+  const { heading, pitch } = modelShotPose(s)
+  const yaw = heading + Math.PI
+  const p = -pitch
+  // Mesh nose is authored toward local +Z. Rotate by yaw about Y, then pitch
+  // about X, and read off where local +Z lands.
+  const cp = Math.cos(p), sp = Math.sin(p)
+  const cy = Math.cos(yaw), sy = Math.sin(yaw)
+  // rotateX(p) sends +Z → (0, -sp, cp); rotateY(yaw) then rotates about Y.
+  const x = cp * sy
+  const y = -sp
+  const z = cp * cy
+  return [x, y, z]
+}
+
 // ── Death presentation ─────────────────────────────────────────────────
 
 // resolveDeathPlan decides wreck vs flying-polygon debris from the death

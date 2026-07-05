@@ -25,6 +25,7 @@ import {
   stepDebris,
   stepModelShots,
   modelShotPose,
+  projectileNoseAxis,
   impactBurst,
 } from '../world-fx.js'
 import { ExplosionManager } from '../explosion-fx.js'
@@ -115,6 +116,42 @@ test('a model weapon flies its packed mesh with a smoke trail scheduled', () => 
   for (let i = 0; i < 100; i++) stepModelShots(shots, 40)
   assert.equal(shots.length, 0, 'shot should expire')
   assert.ok(b.particles.count > before, 'impact burst should emit particles')
+})
+
+// The projectile mesh must fly NOSE-FIRST: the world-space nose axis the
+// renderer poses it with (projectileNoseAxis) has to point ALONG the shot's
+// velocity (dot ≈ +1), never anti-parallel (dot ≈ -1, the "flies backwards"
+// bug).  This covers the flat shot, a climbing/diving shot (pitch), and the
+// vertical-launch phases (straight-up ascent → homing).
+const noseDotVel = (s) => {
+  const n = projectileNoseAxis(s)
+  const vl = Math.hypot(s.vx, s.vy, s.vz)
+  return (n[0] * s.vx + n[1] * s.vy + n[2] * s.vz) / vl
+}
+
+test('projectile nose points along its velocity (flat, climbing, diving)', () => {
+  const cases = [
+    { vx: 250, vy: 0, vz: 0, label: 'east' },
+    { vx: 0, vy: 0, vz: 300, label: 'south (+Z)' },
+    { vx: 0, vy: 0, vz: -300, label: 'north (-Z)' },
+    { vx: 120, vy: 90, vz: -160, label: 'climbing diagonal' },
+    { vx: -60, vy: -140, vz: 40, label: 'diving diagonal' },
+  ]
+  for (const s of cases) {
+    assert.ok(noseDotVel(s) > 0.999, `${s.label}: nose must face velocity (dot ${noseDotVel(s)})`)
+  }
+})
+
+test('vlaunch missile: nose up during ascent, then along homing velocity', () => {
+  // Ascent: velocity is dominated by the vertical climb — nose must point UP.
+  const ascent = { vx: 0.5, vy: 300, vz: -0.5 }
+  const up = projectileNoseAxis(ascent)
+  assert.ok(up[1] > 0.999, `vlaunch ascent nose must point up (y ${up[1]})`)
+  assert.ok(noseDotVel(ascent) > 0.999, 'vlaunch ascent nose must face the climb')
+  // Hand-off / homing: velocity re-aimed down the bearing to the target —
+  // nose must track that new (mostly horizontal) velocity, not the old climb.
+  const homing = { vx: 180, vy: -30, vz: -220 }
+  assert.ok(noseDotVel(homing) > 0.999, 'vlaunch homing nose must face the homing velocity')
 })
 
 test('the D-gun spawns its signature fireball particle', () => {

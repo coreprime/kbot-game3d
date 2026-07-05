@@ -2254,7 +2254,8 @@ export class ModelRenderer {
         // models, whose rest nose faces -Z (heading 0 = north). One half-turn
         // here lets every caller feed the same game-convention heading for
         // both kinds of entity; without it a missile flies tail-first.
-        const entYaw = (+t.headingRad || 0) + (ent.isProjectile ? Math.PI : 0)
+        const projFlip = ent.isProjectile
+        const entYaw = (+t.headingRad || 0) + (projFlip ? Math.PI : 0)
         if (entYaw !== 0) {
           Mat4.rotateY(this._modelMatrix, this._modelMatrix, entYaw)
         }
@@ -2262,8 +2263,13 @@ export class ModelRenderer {
         // flight path, grounded units pitch + roll to the terrain normal
         // under them, and hit-rock impulses ride the same channels.
         // Applied after the yaw so the tilt happens in the unit's own frame.
-        if (t.pitchRad) {
-          Mat4.rotateX(this._modelMatrix, this._modelMatrix, t.pitchRad)
+        // The projectile half-turn about Y flips the local X axis, so the same
+        // positive pitch would tilt the nose the wrong way (down while climbing,
+        // nose-to-ground on a vertical launch) — negate it under the flip so the
+        // nose tracks the velocity's vertical component.
+        const entPitch = projFlip ? -(+t.pitchRad || 0) : (+t.pitchRad || 0)
+        if (entPitch) {
+          Mat4.rotateX(this._modelMatrix, this._modelMatrix, entPitch)
         }
         if (t.rollRad) {
           Mat4.rotateZ(this._modelMatrix, this._modelMatrix, t.rollRad)
@@ -2726,13 +2732,16 @@ export class ModelRenderer {
           Mat4.translate(this._modelMatrix, this._modelMatrix, t.x, t.y, t.z)
         }
         // Same yaw + tilt chain as the main pass (including the projectile
-        // nose flip) so a tilted unit's shadow matches its silhouette.
-        const shadowYaw = (+t.headingRad || 0) + (ent.isProjectile ? Math.PI : 0)
+        // nose flip, and the matching pitch negation under it) so a tilted
+        // unit's shadow matches its silhouette.
+        const shadowFlip = ent.isProjectile
+        const shadowYaw = (+t.headingRad || 0) + (shadowFlip ? Math.PI : 0)
         if (shadowYaw !== 0) {
           Mat4.rotateY(this._modelMatrix, this._modelMatrix, shadowYaw)
         }
-        if (t.pitchRad) {
-          Mat4.rotateX(this._modelMatrix, this._modelMatrix, t.pitchRad)
+        const shadowPitch = shadowFlip ? -(+t.pitchRad || 0) : (+t.pitchRad || 0)
+        if (shadowPitch) {
+          Mat4.rotateX(this._modelMatrix, this._modelMatrix, shadowPitch)
         }
         if (t.rollRad) {
           Mat4.rotateZ(this._modelMatrix, this._modelMatrix, t.rollRad)
@@ -3638,8 +3647,10 @@ export class ModelRenderer {
       Mat4.translate(this._modelMatrix, this._modelMatrix, ut.x, ut.y, ut.z)
       if (ut.headingRad !== 0) Mat4.rotateY(this._modelMatrix, this._modelMatrix, ut.headingRad)
       // Pitch tilts the nose along the climb/dive — applied after the yaw,
-      // matching the sandbox projectile-entity convention.
-      if (t.pitchRad) Mat4.rotateX(this._modelMatrix, this._modelMatrix, t.pitchRad)
+      // matching the sandbox projectile-entity convention.  Negated because
+      // the +PI nose flip above inverts the local X axis (see the entity loop).
+      const projPitch = -(+t.pitchRad || 0)
+      if (projPitch) Mat4.rotateX(this._modelMatrix, this._modelMatrix, projPitch)
       this.#renderMain(this.renderMode === 'flat')
     }
     this.model = savedModel
