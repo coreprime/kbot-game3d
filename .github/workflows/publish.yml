@@ -1,0 +1,43 @@
+name: Publish (GitHub Packages)
+
+# Tag v<version> -> build, version-guard, secret-scan, publish
+# @coreprime/kbot-game3d to npm.pkg.github.com via GITHUB_TOKEN.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://npm.pkg.github.com
+          scope: '@coreprime'
+      - run: npm ci
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Version guard
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"; PKG="$(node -p "require('./package.json').version")"
+          [ "$TAG" = "$PKG" ] || { echo "tag $TAG != package.json $PKG"; exit 1; }
+      - run: npm run build
+      - name: Pack + secret scan
+        run: |
+          rm -rf /tmp/pkg /tmp/ex && mkdir -p /tmp/pkg /tmp/ex
+          npm pack --pack-destination /tmp/pkg
+          tar -xzf /tmp/pkg/*.tgz -C /tmp/ex
+          curl -sSfL https://raw.githubusercontent.com/trufflesecurity/trufflehog/main/scripts/install.sh | sudo sh -s -- -b /usr/local/bin
+          trufflehog --no-update filesystem /tmp/ex/package --results=verified,unknown --fail
+      - name: Publish
+        run: npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

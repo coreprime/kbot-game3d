@@ -1,6 +1,6 @@
 {
   "name": "@coreprime/kbot-game3d",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Self-contained WebGL renderer for Total Annihilation-style scenes: 3DO models, GAF textures, COB-posed pieces, terrain/sky/water and weapon effects, fed through an injected AssetProvider.",
   "license": "MIT",
   "type": "module",
@@ -19,7 +19,10 @@
     "LICENSE"
   ],
   "scripts": {
+    "lint": "eslint . --max-warnings 0",
+    "test": "node --test test/*.test.js",
     "build": "node scripts/build.mjs",
+    "check": "npm run lint && npm run build && npm run test",
     "prepack": "npm run build"
   },
   "engines": {
@@ -30,14 +33,16 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/coreprime/kbot.git",
-    "directory": "packages-js/game3d"
+    "url": "git+https://github.com/coreprime/kbot-game3d.git"
   },
-  "homepage": "https://github.com/coreprime/kbot/tree/main/packages-js/game3d",
+  "homepage": "https://github.com/coreprime/kbot-game3d",
   "bugs": {
-    "url": "https://github.com/coreprime/kbot/issues"
+    "url": "https://github.com/coreprime/kbot-game3d/issues"
   },
   "devDependencies": {
-    "esbuild": "^0.25.0"
+    "@eslint/js": "^9.0.0",
+    "esbuild": "^0.25.0",
+    "eslint": "^9.0.0",
+    "globals": "^15.0.0"
   }
 }

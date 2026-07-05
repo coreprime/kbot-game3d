@@ -18,7 +18,6 @@ import { fileURLToPath } from 'node:url'
 import { createRequire } from 'node:module'
 
 const pkgDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
-const repoRoot = path.resolve(pkgDir, '..', '..')
 const distDir = path.join(pkgDir, 'dist')
 
 execFileSync(process.execPath, [path.join(pkgDir, 'scripts', 'gen-assets.mjs')], { stdio: 'inherit' })
@@ -45,6 +44,5 @@ await esbuild.build({
 })
 
 copyFileSync(path.join(pkgDir, 'index.d.ts'), path.join(distDir, 'index.d.ts'))
-copyFileSync(path.join(repoRoot, 'LICENSE'), path.join(pkgDir, 'LICENSE'))
 
 console.log(`built dist/ (${entryPoints.length} modules)`)
