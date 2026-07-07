@@ -356,14 +356,14 @@ export class ModelLoader {
       if (count === 1) {
         // Emit points — used as smoke/explosion anchors.  Rendered as
         // GL_POINTS so users can see piece anchors in the viewer.
-        const bucket = this.#getOrCreate(pointBuckets, bucketKey, prim.texture, color)
+        const bucket = this.#getOrCreate(pointBuckets, bucketKey, prim.texture, texKey, color)
         const v = indices[0]
         const x = verts[v * 3] || 0, y = verts[v * 3 + 1] || 0, z = verts[v * 3 + 2] || 0
         bucket.interleaved.push(x, y, z, 0, 1, 0, 0.5, 0.5, 1)
         continue
       }
       if (count === 2) {
-        const bucket = this.#getOrCreate(lineBuckets, bucketKey, prim.texture, color)
+        const bucket = this.#getOrCreate(lineBuckets, bucketKey, prim.texture, texKey, color)
         for (let i = 0; i < 2; i++) {
           const v = indices[i]
           const x = verts[v * 3] || 0, y = verts[v * 3 + 1] || 0, z = verts[v * 3 + 2] || 0
@@ -386,7 +386,7 @@ export class ModelLoader {
         ])
       }
       const normal = this.#faceNormal(positions)
-      const bucket = this.#getOrCreate(triBuckets, bucketKey, prim.texture, color)
+      const bucket = this.#getOrCreate(triBuckets, bucketKey, prim.texture, texKey, color)
       // Stash the tier on the bucket so the renderer can apply a
       // depth offset to higher-tier coplanar layers.
       bucket.depthTier = Math.max(bucket.depthTier || 0, tier)
@@ -494,7 +494,13 @@ export class ModelLoader {
           vbo: null,
           mode,
           vertexCount: 0,
-          textureName: bucket.texture || null,
+          // textureName is the resolver key the texture cache binds under —
+          // it carries any per-side query (TA:K) so the draw-time bind hits
+          // the same variant the loader prefetched.  `texture` keeps the plain
+          // name for material-hint / decal lookups (and the renderer's live
+          // hint re-apply, which reads `g.texture`).
+          textureName: bucket.bindName || bucket.texture || null,
+          texture: bucket.texture || null,
           color: bucket.color,
           isDecal: !!(bucket.texture && decals.has(bucket.texture.toLowerCase())),
           depthTier: bucket.depthTier || 0,
@@ -557,16 +563,23 @@ export class ModelLoader {
   #getOrCreateColored(map, key, color) {
     let bucket = map.get(key)
     if (!bucket) {
-      bucket = { interleaved: [], texture: '', color }
+      bucket = { interleaved: [], texture: '', bindName: '', color }
       map.set(key, bucket)
     }
     return bucket
   }
 
-  #getOrCreate(map, key, texture, color) {
+  // texture is the ORIGINAL (case-preserving) 3DO texture name, kept for
+  // material-hint / decal lookups.  bindName is the resolver key the texture
+  // cache + AssetProvider load under — for TA:K it carries the per-side query
+  // ("aidcastle_smstone2?side=ara") so the draw-time bind resolves the same
+  // side variant the loader prefetched; for TA it equals the lowercased name.
+  // Without a distinct bindName the render bind fell back to the side-less
+  // name, 404'd, and every TA:K unit painted the neutral-grey fallback.
+  #getOrCreate(map, key, texture, bindName, color) {
     let bucket = map.get(key)
     if (!bucket) {
-      bucket = { interleaved: [], texture: texture || '', color }
+      bucket = { interleaved: [], texture: texture || '', bindName: bindName || '', color }
       map.set(key, bucket)
     }
     return bucket
