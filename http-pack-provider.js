@@ -103,20 +103,31 @@ export class HttpPackProvider {
     return this.fetchJson(`models/${stem}.json`, `model ${name}`)
   }
 
-  // name may carry a resolver query ("armkbot4?side=ara") — per-side
-  // texture variants live at textures/<name>--<side>.png in a pack.
+  // name may carry a resolver query ("armkbot4?side=ara&team=1") — per-side
+  // texture variants live at textures/<name>--<side>.png in a pack, and
+  // per-player team pages (format v7) add textures/<name>[--side]--t<N>.png.
   async texture(name) {
     let stem = String(name)
     let side = ''
+    let team = ''
     const qi = stem.indexOf('?')
     if (qi !== -1) {
       const query = new URLSearchParams(stem.slice(qi + 1))
       side = query.get('side') || ''
+      team = query.get('team') || ''
       stem = stem.slice(0, qi)
     }
     const rel = side
       ? `textures/${packStem(stem)}--${packStem(side)}.png`
       : `textures/${packStem(stem)}.png`
+    if (/^\d+$/.test(team)) {
+      // Team page first; fall back to the base file for packs that predate
+      // format v7 (the base is the page-0 frame).
+      const paged = rel.replace(/\.png$/, `--t${team}.png`)
+      try {
+        return await loadImage(this.url(paged))
+      } catch { /* fall through to the base variant */ }
+    }
     try {
       return await loadImage(this.url(rel))
     } catch {

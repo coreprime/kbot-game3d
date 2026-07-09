@@ -7,7 +7,8 @@
 // rules.  Deep-integration hosts can also compose the underlying
 // classes directly; both routes share the same module instances.
 
-export { createWorld } from './create-world.js'
+export { createWorld, NANOLATHE_STYLES } from './create-world.js'
+export { gameViewConfig } from './game-view.js'
 export { setAssetProvider, getAssetProvider, requireAssetProvider, toTexImageSource } from './assets.js'
 export { HttpPackProvider } from './http-pack-provider.js'
 
@@ -93,7 +94,7 @@ export {
 } from './explosion-fx.js'
 
 // Team + texture configuration
-export { TEAM_SIDES, TA_TEAM_SIDES, setTeamSides, teamColorForSide, displayRgbForSide, sideForKey } from './team-colors.js'
+export { TEAM_SIDES, TA_TEAM_SIDES, TAK_TEAM_SIDES, setTeamSides, teamColorForSide, teamPageForSide, displayRgbForSide, sideForKey } from './team-colors.js'
 export { setEnhanceMeshEnabled, enhanceMeshEnabled, onEnhanceMeshChanged } from './enhance-mesh.js'
 export {
   resolveTextureHints,

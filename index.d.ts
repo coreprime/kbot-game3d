@@ -546,6 +546,8 @@ export function createWorld(
       teamSides?: unknown[]
       lodHidePatterns?: RegExp[]
       projectileFallbackColors?: Record<string, unknown>
+      /** Construction palette: 'green' (TA nano, default) | 'gold' (TA:K magic casting). */
+      nanolatheStyle?: 'green' | 'gold'
     }
     environment?: string | object | null
     /** Renderer quality preset: 'standard' (default) | 'cinematic'. */
@@ -758,11 +760,19 @@ export function damageSmokeIntervalMs(hp01: number | null | undefined): number |
 // Team + texture configuration
 /** TA's player-colour table (side 0..7) — the default createWorld installs; map a recording's player slot onto `side` with it. */
 export const TA_TEAM_SIDES: Array<{ side: number; key: string; label: string; rgb: [number, number, number] | null; swatchCss: string }>
+/** TA:K's player-colour table (side 0..9): recolour by texture PAGE (`page` = GAF frame per player slot), `display` for swatch surfaces; rgb stays null (no hue-shift). */
+export const TAK_TEAM_SIDES: Array<{ side: number; key: string; label: string; rgb: null; page: number; display: [number, number, number]; swatchCss: string }>
 export const TEAM_SIDES: unknown[]
 export function setTeamSides(sides: unknown[] | null | undefined): void
 export function teamColorForSide(side: number): [number, number, number]
 export function displayRgbForSide(side: number): string
 export function sideForKey(key: string): number
+/** Per-player texture-page (GAF frame) index for the side, or null when the active game hue-shifts instead (TA). */
+export function teamPageForSide(side: number): number | null
+/** Per-game view defaults ({ teamSides, nanolatheStyle }) for a pack/recording game id ('totala' | 'tak' | ...); {} for unknown ids. */
+export function gameViewConfig(gameId: string | null | undefined): { teamSides?: unknown[]; nanolatheStyle?: 'green' | 'gold' }
+/** The construction palettes behind game.nanolatheStyle. */
+export const NANOLATHE_STYLES: Record<'green' | 'gold', { beam: number[]; reclaim: number[]; buildFx: number[] }>
 export function setEnhanceMeshEnabled(on: boolean): void
 export function enhanceMeshEnabled(): boolean
 export function onEnhanceMeshChanged(cb: () => void): () => void

@@ -188,6 +188,11 @@ export class ModelRenderer {
     // null means "leave the texture alone".
     this.teamColor = null
     this.teamColorEnable = false
+    // Team texture page (TA:K).  When an entity's side maps to a page
+    // index, draw groups flagged teamPaged bind the owning player's
+    // authored colour frame (`&team=<page>` on the texture key) instead
+    // of hue-shifting.  null = bind the baked base frame.
+    this._teamPage = null
 
     // Background mountain ring.  The renderer paints procedural
     // mountains on non-sea ground modes, outside a clearing centred
@@ -2241,6 +2246,8 @@ export class ModelRenderer {
             this.teamColorEnable = false
           }
         }
+        // Per-entity team texture page (TA:K page-based recolour).
+        this._teamPage = (ent.teamPage != null) ? (ent.teamPage | 0) : null
         const t = ent.transform || { x: 0, y: 0, z: 0, headingRad: 0 }
         this._unitTransform.x = +t.x || 0
         this._unitTransform.y = +t.y || 0
@@ -2422,6 +2429,7 @@ export class ModelRenderer {
       this._unitTransform.headingRad = savedUt.headingRad
       this.teamColor = savedTC
       this.teamColorEnable = savedTCe
+      this._teamPage = null
       // Selection rings — ground-aligned green hairline squares per
       // entity with `selected: true`.  Drawn AFTER the entity loop so
       // the ring composites on top of the unit when the camera looks
@@ -4045,9 +4053,15 @@ export class ModelRenderer {
             gl.disable(gl.POLYGON_OFFSET_FILL)
             this.#u1f(this.uMainDepthBias, 0)
           }
+          // Team-paged groups bind the entity's player-colour frame; the
+          // suffixed key resolves to textures/<name>[--side]--t<N>.png in
+          // a v7 pack (and falls back to the base frame server-side).
+          const bindKey = (group.teamPaged && group.textureName && this._teamPage != null)
+            ? `${group.textureName}${group.textureName.includes('?') ? '&' : '?'}team=${this._teamPage}`
+            : group.textureName
           if (shadowPass) {
             if (group.textureName && this.textureCache) {
-              const entry = this.textureCache.get(group.textureName)
+              const entry = this.textureCache.get(bindKey)
               this.#bindTex(0, entry.tex)
               this.#u1i(this.uShadowTex, 0)
               this.#u1i(this.uShadowMode, 0)
@@ -4056,7 +4070,7 @@ export class ModelRenderer {
             }
           } else {
             if (group.textureName && this.textureCache) {
-              const entry = this.textureCache.get(group.textureName)
+              const entry = this.textureCache.get(bindKey)
               this.#bindTex(0, entry.tex)
               this.#u1i(this.uTex, 0)
               this.#u1i(this.uMode, 0)
