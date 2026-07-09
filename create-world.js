@@ -320,6 +320,8 @@ export async function createWorld(canvas, {
     const w = worldBinding._lastFiredWeapon
     impactBurst(worldBinding, [pool.x[slot], pool.y[slot], pool.z[slot]], {
       aoe: (w && w.areaOfEffectWU) || 16,
+      // Pack v8 physical class: an arrow/stone landing is dust, not fire.
+      physical: !!(w && w.effectClass === 'physical'),
     })
   }
 

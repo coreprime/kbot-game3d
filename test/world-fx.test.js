@@ -277,3 +277,147 @@ test('hit-rock amplitude is scaled to 0.6× (40% gentler lean)', () => {
   assert.ok(Math.abs(IMPULSE_KICK_SCALE - PREVIOUS_KICK * 0.6) < 1e-9,
     `kick scale ${IMPULSE_KICK_SCALE} must be 0.6 × ${PREVIOUS_KICK}`)
 })
+
+// ── Pack v8 effectClass (per-game weapon presentation) ─────────────────
+//
+// TA:K weapons ship no rendertype; the pack classifies them from the FBI's
+// own fields into effectClass, and the class gates light/glow: physical
+// projectiles (arrows / stones) are dark unlit objects, fire/magic glow
+// warm, lightning draws the tinted beam, melee draws nothing.  TA defs
+// carry a class too but keep their rendertype-driven pipeline bit-for-bit.
+
+import {
+  SFX_PROJECTILE_SHELL,
+  SFX_PROJECTILE_PLASMA,
+  SFX_PROJECTILE_BULLET,
+  SFX_FIRE_FLASH,
+  pickProjectileKind,
+  projectileColor,
+  projectileLightStrength,
+} from '../weapon-driver.js'
+import { TA_TURN_TO_RAD } from '../world-fx.js'
+
+const ARROW_DEF = normalizePackWeaponDef('standard arrow', {
+  id: 'standard arrow', effectClass: 'physical', takType: 'ballistic',
+  ballistic: true, model: 'araarrow', velocityWU: 530, rangeWU: 550,
+})
+const STONE_DEF = normalizePackWeaponDef('cannonball', {
+  id: 'cannonball', effectClass: 'physical', takType: 'ballistic',
+  ballistic: true, velocityWU: 750, rangeWU: 750, areaOfEffectWU: 100,
+})
+const FIRE_DEF = normalizePackWeaponDef('death breath', {
+  id: 'death breath', effectClass: 'fire', takType: 'line of sight',
+  velocityWU: 250, rangeWU: 200, areaOfEffectWU: 10,
+})
+const MAGIC_DEF = normalizePackWeaponDef('fire swirl', {
+  id: 'fire swirl', effectClass: 'magic', takType: 'guided',
+  guidance: true, turnRate: 200, velocityWU: 350, rangeWU: 1200, areaOfEffectWU: 10,
+})
+const LIGHTNING_DEF = normalizePackWeaponDef('lightning', {
+  id: 'lightning', effectClass: 'lightning', takType: 'line of sight',
+  color: [255, 255, 255], color2: [180, 200, 255], velocityWU: 5000, rangeWU: 500,
+})
+const MELEE_DEF = normalizePackWeaponDef('magical sword', {
+  id: 'magical sword', effectClass: 'melee', takType: 'melee', rangeWU: 40,
+})
+
+test('effectClass classifies TA:K plans: arrow=model stone=particle lightning=beam melee=none', () => {
+  assert.equal(weaponVisualPlan(ARROW_DEF), 'model')
+  assert.equal(weaponVisualPlan(STONE_DEF), 'particle')
+  assert.equal(weaponVisualPlan(FIRE_DEF), 'particle')
+  assert.equal(weaponVisualPlan(LIGHTNING_DEF), 'beam')
+  assert.equal(weaponVisualPlan(MELEE_DEF), 'none')
+})
+
+test('physical shots never light or glow: dark tint, zero lightStrength, no muzzle flash', () => {
+  // Kind: an arcing stone reads as the shell particle, but dark.
+  assert.equal(pickProjectileKind(STONE_DEF), SFX_PROJECTILE_SHELL)
+  const c = projectileColor(STONE_DEF, SFX_PROJECTILE_SHELL, palette)
+  assert.ok(c[0] < 0.5 && c[1] < 0.5 && c[2] < 0.5, `physical tint must be dark, got ${c}`)
+  // Light: aoe 100 would give a bright pulse on any other class.
+  assert.equal(projectileLightStrength(STONE_DEF, SFX_PROJECTILE_SHELL), 0)
+  // Muzzle: an arrow leaving a bow has no fiery pop.
+  const b = binding()
+  const shots = []
+  const res = spawnWeaponVisual({
+    weapon: ARROW_DEF, from: [0, 5, 0], to: [200, 5, 0],
+    binding: b, palette, modelShots: shots,
+  })
+  assert.equal(res.plan, 'model')
+  assert.equal(shots.length, 1)
+  assert.equal(shots[0].physical, true)
+  for (let i = 0; i < b.particles.count; i++) {
+    assert.notEqual(b.particles.kind[i], SFX_FIRE_FLASH, 'physical launch must not flash fire')
+    assert.equal(b.particles.lightStrength[i], 0, 'physical launch must not light the scene')
+  }
+})
+
+test('physical impacts are dust + sparks, never fire or a fireball mesh', () => {
+  const b = binding()
+  b.explosions = new ExplosionManager()
+  impactBurst(b, [0, 0, 0], { aoe: 100, physical: true })
+  assert.ok(b.particles.count > 0, 'impact should still emit dust')
+  for (let i = 0; i < b.particles.count; i++) {
+    assert.notEqual(b.particles.kind[i], SFX_FIRE_FLASH, 'physical impact must not flash fire')
+    assert.equal(b.particles.lightStrength[i], 0)
+  }
+  assert.equal(b.explosions.liveCount, 0, 'physical impact must not spawn an explosion fireball')
+})
+
+test('fire/magic bolts glow warm with a modest light', () => {
+  for (const def of [FIRE_DEF, MAGIC_DEF]) {
+    assert.equal(pickProjectileKind(def), SFX_PROJECTILE_PLASMA)
+    const c = projectileColor(def, SFX_PROJECTILE_PLASMA, palette)
+    assert.ok(c[0] > 1.0, `${def.name} needs a hot red channel, got ${c}`)
+    assert.ok(c[2] < 0.6, `${def.name} must stay warm (low blue), got ${c}`)
+    const light = projectileLightStrength(def, SFX_PROJECTILE_PLASMA)
+    assert.ok(light >= 40 && light <= 200, `${def.name} glow ${light} out of the warm band`)
+  }
+})
+
+test('TA:K lightning draws the beam in the TDF inner colour', () => {
+  const b = binding()
+  const res = spawnWeaponVisual({
+    weapon: LIGHTNING_DEF, from: [0, 10, 0], to: [100, 10, 0],
+    binding: b, palette,
+  })
+  assert.equal(res.plan, 'beam')
+  let pulses = 0
+  for (let i = 0; i < b.particles.count; i++) {
+    if (b.particles.kind[i] !== SFX_PROJECTILE_LASER) continue
+    pulses++
+    // innercolor 255 255 255 → a white-ish pulse, not the palette default.
+    assert.ok(b.particles.r[i] > 0.8 && b.particles.b[i] > 0.8, 'lightning tint should carry the RGB triple')
+  }
+  assert.ok(pulses >= 12, `lightning beam too sparse: ${pulses}`)
+})
+
+test('melee spawns nothing at all', () => {
+  const b = binding()
+  const res = spawnWeaponVisual({
+    weapon: MELEE_DEF, from: [0, 0, 0], to: [10, 0, 0], binding: b, palette,
+  })
+  assert.equal(res.plan, 'none')
+  assert.equal(b.particles.count, 0)
+})
+
+test('turnRate converts on the right scale per game', () => {
+  // TA:K guided (takType present): 180 deg/s → π rad/s.
+  const tak = normalizePackWeaponDef('t', { takType: 'guided', turnRate: 180, guidance: true })
+  assert.ok(Math.abs(tak.turnRateRad - Math.PI) < 1e-9, `tak rad/s ${tak.turnRateRad}`)
+  // TA (no takType): 32768 TA units/s → π rad/s.
+  const ta = normalizePackWeaponDef('m', { turnRate: 32768, guidance: true })
+  assert.ok(Math.abs(ta.turnRateRad - 32768 * TA_TURN_TO_RAD) < 1e-12)
+  assert.ok(Math.abs(ta.turnRateRad - Math.PI) < 1e-9)
+})
+
+test('pre-v8 defs (no effectClass) keep the legacy pipeline untouched', () => {
+  assert.equal(weaponVisualPlan(LASER_DEF), 'beam')
+  assert.equal(weaponVisualPlan(ROCKET_DEF), 'model')
+  assert.equal(weaponVisualPlan(DGUN_DEF), 'particle')
+  // A flag-less bullet def stays the branded bright tracer.
+  const plain = normalizePackWeaponDef('gun', { velocityWU: 300, rangeWU: 300 })
+  assert.equal(pickProjectileKind(plain), SFX_PROJECTILE_BULLET)
+  const c = projectileColor(plain, SFX_PROJECTILE_BULLET, palette)
+  assert.ok(c[0] >= 1.0, `legacy bullet tint must stay bright, got ${c}`)
+})

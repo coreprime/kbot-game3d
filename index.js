@@ -61,6 +61,11 @@ export {
 } from './weapon-driver.js'
 export { loadWeaponBitmap, clearWeaponBitmapCache } from './weapon-bitmap-loader.js'
 export {
+  weaponEffectClass,
+  isPhysicalClass,
+  isWarmGlowClass,
+} from './weapon-rendertype.js'
+export {
   normalizePackWeaponDef,
   weaponVisualPlan,
   spawnWeaponVisual,

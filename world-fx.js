@@ -28,6 +28,8 @@ import {
   WEAPON_RENDERTYPE_MINDGUN,
   WEAPON_RENDERTYPE_LIGHTNING,
   hasRenderType,
+  isPhysicalClass,
+  weaponEffectClass,
 } from './weapon-rendertype.js'
 
 // normalizePackWeaponDef maps one weapons.json entry (pack format v4 — see
@@ -39,9 +41,21 @@ import {
 export function normalizePackWeaponDef(id, def) {
   if (!def) return null
   const colorIdx = def.colorIdx != null ? def.colorIdx : 0
+  // TA:K packs (takType present) carry turnrate on the game's own scale —
+  // stock guided weapons ship 180..360, where TA's angle units run
+  // 10000..32768 per second.  Read the TA:K numbers as degrees/second;
+  // pushing them through the TA 65536-per-circle conversion leaves a
+  // "guided" fireball steering ~0.02 rad/s, i.e. flying dead straight.
+  const takType = typeof def.takType === 'string' ? def.takType.toLowerCase() : ''
+  const turnRate = def.turnRate | 0
+  const turnRateRad = takType ? turnRate * (Math.PI / 180) : turnRate * TA_TURN_TO_RAD
   return {
     name: String(def.id || id || '').toUpperCase(),
     renderType: def.renderType,
+    // Pack v8 presentation class (see weapon-rendertype.js); '' on older
+    // packs, which keeps every class gate below inert.
+    effectClass: typeof def.effectClass === 'string' ? def.effectClass.toLowerCase() : '',
+    takType,
     beamWeapon: !!def.beamWeapon,
     ballistic: !!def.ballistic,
     dropped: !!def.dropped,
@@ -66,10 +80,10 @@ export function normalizePackWeaponDef(id, def) {
     soundStart: def.soundStart || '',
     soundHit: def.soundHit || '',
     // Guided-flight + water fields (pack format v5; zero on older packs).
-    // turnRate is TA angle units (65536 = full circle) per second — the
-    // converted rad/s value is what the steering integrator consumes.
-    turnRate: def.turnRate | 0,
-    turnRateRad: (def.turnRate | 0) * TA_TURN_TO_RAD,
+    // turnRate is the raw pack number; turnRateRad (computed above, TA vs
+    // TA:K scale) is what the steering integrator consumes.
+    turnRate,
+    turnRateRad,
     guidance: !!def.guidance,
     waterWeapon: !!def.waterWeapon,
     accelerationWU: +def.accelerationWU || 0,
@@ -105,18 +119,25 @@ export function isBeamDef(w) {
       || w.renderType === WEAPON_RENDERTYPE_MINDGUN
       || w.renderType === WEAPON_RENDERTYPE_LIGHTNING
   }
+  // TA:K lightning bolts (no rendertype in the game data) are instant
+  // line-of-sight strikes — draw them on the beam path, tinted by the
+  // def's innercolor/outercolor.  A physical shot is never a beam.
+  if (weaponEffectClass(w) === 'lightning') return true
   return !!w.beamWeapon && !w.commandFire
 }
 
 // weaponVisualPlan classifies how a shot should be drawn:
+//   'none'  — melee: no projectile exists, the swing is the unit's COB
+//             animation.  Nothing is spawned.
 //   'beam'  — instant muzzle→target visual (laser pulse chain).
 //   'model' — the weapon's packed projectile 3DO flies the trajectory
-//             (missiles, rockets, torpedoes, bombs).
+//             (missiles, rockets, torpedoes, bombs, TA:K arrows).
 //   'particle' — everything else routes through weapon-driver's projectile
 //             particles (D-gun fireball, bitmap sprite bolts, shells).
 // Pure classification, no side effects — unit-testable headlessly.
 export function weaponVisualPlan(w) {
   if (!w) return 'particle'
+  if (weaponEffectClass(w) === 'melee') return 'none'
   if (isBeamDef(w)) return 'beam'
   if (hasRenderType(w) && w.renderType === WEAPON_RENDERTYPE_DGUN) return 'particle'
   if (w.model) return 'model'
@@ -141,9 +162,31 @@ export function weaponVisualPlan(w) {
 // hillside (terrain-los.js) rather than hitting a unit — a brown DIRT PUFF +
 // a few debris sparks, no fire glow and no explosion-manager fireball, so a
 // blocked round visibly splashes on the slope without reading as a kill.
-export function impactBurst(binding, pos, { aoe = 16, sparks = true, kind = 'impact', severity = 0, water = false, terrain = false } = {}) {
+//
+// Physical rounds: pass { physical: true } (pack v8 effectClass) for an
+// arrow / bolt / stone landing — dust + a couple of sparks scaled to the
+// blast, NO fire flash, NO dynamic light and no explosion-manager fireball.
+// A medieval projectile strike must never read as an energy detonation.
+export function impactBurst(binding, pos, { aoe = 16, sparks = true, kind = 'impact', severity = 0, water = false, terrain = false, physical = false } = {}) {
   if (!binding || !binding.particles) return
   const p = binding.particles
+  if (physical && !water) {
+    // Dust kicked up where the object struck (unit hit or terrain block
+    // alike), sized by the blast — an arrow puffs barely at all; a
+    // trebuchet stone throws a real cloud.
+    p.emit(SFX_SMOKE_GREY, pos, {
+      size: Math.max(5, Math.min(36, aoe * 0.45)),
+      lifeMs: 700,
+      color: [0.5, 0.45, 0.38, 0.7],
+      riseSpeed: 4,
+      drift: 1.4,
+    })
+    if (sparks) {
+      const n = Math.max(1, Math.min(6, Math.round(aoe / 20)))
+      for (let i = 0; i < n; i++) p.emit(SFX_SPARK, pos, { color: [0.9, 0.8, 0.6, 0.9] })
+    }
+    return
+  }
   if (terrain) {
     // Terrain block: a shot that buried into a hillside (terrain-los.js
     // retargeted `pos` to the slope) must read as an unmistakable IMPACT on
@@ -254,6 +297,13 @@ export function spawnWeaponVisual({
   const w = weapon || null
   const plan = weaponVisualPlan(w)
   const aoe = (w && w.areaOfEffectWU) || 16
+  const physical = isPhysicalClass(w)
+
+  if (plan === 'none') {
+    // Melee: the strike is the unit's own animation — no projectile, no
+    // muzzle pop, no impact burst.
+    return { plan, kind: null, durationMs: 0 }
+  }
 
   if (plan === 'beam') {
     spawnLaserBeam({ binding, weapon: w, anchor: from, target: to, palette })
@@ -362,10 +412,16 @@ export function spawnWeaponVisual({
       // Shot aimed past a ridge: its target IS the terrain point, so its
       // detonation is a dirt puff even before the height check fires.
       terrainImpact,
+      // Physical object (pack v8): its landing is dust, not fire.
+      physical,
     }
     modelShots.push(shot)
     if (binding && binding.particles) {
-      binding.particles.emit(SFX_FIRE_FLASH, from, { size: 12, lifeMs: 140 })
+      // A physical launch (bow / catapult arm) has no fiery muzzle pop —
+      // the flash belongs to powder and energy weapons.
+      if (!physical) {
+        binding.particles.emit(SFX_FIRE_FLASH, from, { size: 12, lifeMs: 140 })
+      }
       if (w.startSmoke) {
         binding.particles.emit(SFX_SMOKE_WHITE, from, { size: 6, lifeMs: 500 })
       }
@@ -503,7 +559,7 @@ export function stepModelShots(modelShots, dtMs, { onExpire = null, env = null }
       // A shot blocked by terrain (its aim point was the slope) splashes dirt
       // wherever it lands, unless it came down in water.
       const terrain = !!s.terrainImpact && !water
-      impactBurst(s.binding, [s.x, s.y, s.z], { aoe: s.aoe, water, terrain })
+      impactBurst(s.binding, [s.x, s.y, s.z], { aoe: s.aoe, water, terrain, physical: !!s.physical })
       if (onExpire) onExpire(s)
       continue
     }
