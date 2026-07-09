@@ -35,6 +35,9 @@ import {
   WEAPON_RENDERTYPE_BOMB,
   WEAPON_RENDERTYPE_LIGHTNING,
   hasRenderType,
+  isPhysicalClass,
+  isWarmGlowClass,
+  weaponEffectClass,
 } from './weapon-rendertype.js'
 import { loadWeaponBitmap } from './weapon-bitmap-loader.js'
 
@@ -106,11 +109,28 @@ export function projectileColor(weapon, kind, palette) {
   // engine/weapon-bitmap-loader.js + internal/studio/weapon_bitmap.go.
   if (kind === SFX_PROJECTILE_SPRITE) return [1.0, 1.0, 1.0, 1.0]
   const w = weapon || {}
+  // Pack v8 effect classes with their own hues (see weapon-rendertype.js).
+  // A physical object is a DARK silhouette — sub-1.0 channels so the
+  // additive particle stays a dim speck rather than a glowing tracer.
+  // Fire and magic read as warm embers, not sci-fi energy.
+  if (isPhysicalClass(w)) return [0.30, 0.27, 0.22, 1]
+  const cls = weaponEffectClass(w)
+  if (cls === 'fire') return [1.8, 0.75, 0.25, 1]
+  if (cls === 'magic') return [1.5, 0.9, 0.4, 1]
   const mul = PROJECTILE_BRIGHTNESS[kind] || 1.0
   const idx = (w.colorIdx > 0) ? w.colorIdx : (w.color2Idx > 0 ? w.color2Idx : 0)
   if (palette && idx > 0) {
     const c = palette.colorFor(idx)
     return [Math.min(2, c[0] * mul), Math.min(2, c[1] * mul), Math.min(2, c[2] * mul), 1]
+  }
+  // No palette index but a resolved RGB triple (TA:K colours are literal
+  // "R G B" values, not palette refs — the lightning bolt's inner band).
+  // An all-zero triple reads as "no colour" (TA color=0 resolves to
+  // palette black), same as the idx>0 gate above, so the kind's branded
+  // fallback hue still wins there.
+  if (Array.isArray(w.colorRGB) && (w.colorRGB[0] + w.colorRGB[1] + w.colorRGB[2]) > 0) {
+    const c = w.colorRGB
+    return [Math.min(2, c[0] / 255 * mul), Math.min(2, c[1] / 255 * mul), Math.min(2, c[2] / 255 * mul), 1]
   }
   const fb = PROJECTILE_FALLBACK_COLOUR[kind] || [1.0, 1.0, 1.0]
   return [fb[0] * mul, fb[1] * mul, fb[2] * mul, 1]
@@ -136,6 +156,24 @@ export function laserColor(weapon, palette) {
 // based heuristic.  Name regex is the absolute last resort.
 export function pickProjectileKind(weapon) {
   const w = weapon || {}
+  // Pack v8 effect classes for weapons WITHOUT a TA rendertype (TA:K's
+  // inline FBI weapons).  TA weapons carry both rendertype and a class, and
+  // the rendertype dispatch below stays their single source of truth so the
+  // TA look is untouched.
+  if (!hasRenderType(w)) {
+    switch (weaponEffectClass(w)) {
+      case 'physical':
+        // Arrow / bolt / stone: an arcing round reads as a (dark-tinted —
+        // see projectileColor) shell, a flat one as a bullet speck.
+        return (w.ballistic || w.dropped) ? SFX_PROJECTILE_SHELL : SFX_PROJECTILE_BULLET
+      case 'fire':
+      case 'magic':
+        // Warm ember bolt (colour + glow come from the class gates).
+        return SFX_PROJECTILE_PLASMA
+      case 'lightning':
+        return SFX_PROJECTILE_LASER
+    }
+  }
   if (hasRenderType(w)) {
     switch (w.renderType) {
       case WEAPON_RENDERTYPE_LASER:
@@ -230,7 +268,13 @@ export function projectileSize(weapon, kind) {
 // helper computes an additional AoE-scaled value the emitter can pass
 // when it wants every shot's glow to track its real game-data magnitude.
 export function projectileLightStrength(weapon, kind) {
+  // Pack v8 class gates: a physical object NEVER lights the scene — an
+  // arrow is not a lantern, whatever its blast radius says.  Fire/magic
+  // always glow at least a torch's worth so a small-AoE fireball still
+  // reads as burning.
+  if (isPhysicalClass(weapon)) return 0
   const aoe = +((weapon || {}).areaOfEffectWU) || 0
+  if (isWarmGlowClass(weapon)) return Math.max(40, Math.min(200, aoe * 1.4))
   if (aoe <= 0) return 0
   // Lasers and the D-gun keep their baked-in floor (90 / 300) — only
   // raise it for AoE that's beyond that floor.  Other kinds get a
@@ -460,6 +504,8 @@ function resolveSpriteId(binding, weapon) {
 // follow-up effects (e.g. the Weapons-panel projectile recorder).
 export function spawnProjectile({ binding, weapon, anchor, target, palette, gravity = 80, smokeTrails = null }) {
   if (!binding || !binding.particles || !weapon) return null
+  // Melee weapons launch nothing — the strike is the unit's animation.
+  if (weaponEffectClass(weapon) === 'melee') return null
   const dx = target[0] - anchor[0]
   const dy = (target.length >= 3 ? target[1] : 0) - anchor[1]
   const dz = target[2] - anchor[2]
@@ -620,6 +666,7 @@ export function spawnProjectile({ binding, weapon, anchor, target, palette, grav
 // played — those belong to the launch instant, which already happened.
 export function spawnProjectileInFlight({ binding, weapon, pos, vel, lifeMs, palette, gravity = 80 }) {
   if (!binding || !binding.particles || !weapon) return null
+  if (weaponEffectClass(weapon) === 'melee') return null
   const preKind = pickProjectileKind(weapon)
   if (preKind === SFX_PROJECTILE_LASER) return null
   const spriteId = resolveSpriteId(binding, weapon)

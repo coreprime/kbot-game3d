@@ -48,6 +48,43 @@ export const WEAPON_RENDERTYPE_FLAME      = 5
 export const WEAPON_RENDERTYPE_BOMB       = 6
 export const WEAPON_RENDERTYPE_LIGHTNING  = 7
 
+// ── Pack v8 effectClass ────────────────────────────────────────────────
+//
+// weapons.json format v8 carries a per-weapon `effectClass` derived by the
+// pack builder from each game's own weapon data (TA: rendertype + ballistic;
+// TA:K: the type=/nimbus=/lightmap=/hweffect=/damagetype= fields the engine
+// itself dispatches on).  It is the gate for light/glow policy:
+//
+//   physical  — arrow / bolt / stone / ballista shot: a dark object in
+//               flight.  NO light emission, no additive glow, no fiery
+//               muzzle pop; impacts are dust + sparks, not fire.
+//   fire      — flame breath / fireballs: warm emissive glow.
+//   magic     — nimbus-glowing spell projectiles: warm arcane glow.
+//   lightning — bolt weapons: instant beam (tinted by the def's colours).
+//   melee     — no projectile at all (the swing lives in the COB anim).
+//   beam / plasma / missile / ballistic / flame — the TA families; these
+//               keep the renderType-driven pipeline untouched.
+//
+// Packs older than v8 ship no effectClass, so every helper below returns
+// false/'' for them and behaviour is exactly what it was.
+
+export function weaponEffectClass(weapon) {
+  if (!weapon || typeof weapon.effectClass !== 'string') return ''
+  return weapon.effectClass.toLowerCase()
+}
+
+// isPhysicalClass — a mundane object in flight; must never emit light.
+export function isPhysicalClass(weapon) {
+  return weaponEffectClass(weapon) === 'physical'
+}
+
+// isWarmGlowClass — the fire/magic family: warm emissive glow, scaled well
+// below the TA energy weapons.
+export function isWarmGlowClass(weapon) {
+  const c = weaponEffectClass(weapon)
+  return c === 'fire' || c === 'magic'
+}
+
 // hasRenderType — was `rendertype` actually shipped on the weapon, or
 // did the TDF omit it and the Go side defaulted to 0?
 //
