@@ -32,7 +32,7 @@ import { ModelRenderer } from './model-renderer.js'
 import { OrbitCamera } from './orbit-camera.js'
 import { attachOrbitControls } from './camera-controls.js'
 import { setAssetProvider, toTexImageSource } from './assets.js'
-import { setTeamSides, teamColorForSide, TA_TEAM_SIDES } from './team-colors.js'
+import { setTeamSides, teamColorForSide, teamPageForSide, TA_TEAM_SIDES } from './team-colors.js'
 import {
   setProjectileFallbackColors,
   SmokeTrailManager,
@@ -125,6 +125,28 @@ const SURFACE_BAND_WU = 4
 const LATHE_EMIT_INTERVAL_MS = 26
 const LATHE_PARTICLE_SPEED = 220
 
+// Nanolathe presentation styles, selected per game via
+// createWorld(..., { game: { nanolatheStyle } }).  Each style paints the
+// WHOLE construction presentation — the builder's beam cone, the reclaim
+// stream, and the under-construction glow + wireframe scaffold:
+//   green — TA's classic nano spray (the default).
+//   gold  — TA:K's magic casting: warm gold/amber across the board.
+// Beam/reclaim tuples are additive-blend particle colours (>1 channels
+// saturate toward white where motes overlap); buildFx is the 0..1 tint the
+// renderer applies to the build-cut glow and construction wireframe.
+export const NANOLATHE_STYLES = {
+  green: {
+    beam: [0.3, 1.5, 0.55, 1.0],
+    reclaim: [0.55, 1.7, 0.55, 0.9],
+    buildFx: [0.35, 1.0, 0.6],
+  },
+  gold: {
+    beam: [1.8, 1.15, 0.28, 1.0],
+    reclaim: [1.8, 1.3, 0.4, 0.9],
+    buildFx: [1.0, 0.76, 0.28],
+  },
+}
+
 // Build-pad spin rate (rad/s) for a nascent unit under construction on a
 // factory pad — a slow, steady turn (~one revolution every ~10s).
 const BUILD_SPIN_RAD_S = 0.6
@@ -199,6 +221,8 @@ export async function createWorld(canvas, {
   setTeamSides(game.teamSides || TA_TEAM_SIDES)
   if (game.lodHidePatterns) setLodHidePatterns(game.lodHidePatterns)
   if (game.projectileFallbackColors) setProjectileFallbackColors(game.projectileFallbackColors)
+  // Construction palette: TA green nano vs TA:K gold casting.
+  const latheStyle = NANOLATHE_STYLES[game.nanolatheStyle] || NANOLATHE_STYLES.green
 
   await loadWorlds()
   const palette = await TAPalette.load()
@@ -436,7 +460,9 @@ export async function createWorld(canvas, {
         model: u.model,
         transform: _unitPose(u),
         teamColor: u.teamColor,
+        teamPage: u.teamPage != null ? u.teamPage : null,
         buildPercent: u.buildPercent,
+        buildFxColor: latheStyle.buildFx,
         selected: !!u.selected,
       }
       // Air units bank into their turns and hovercraft gyrate via the
@@ -1146,6 +1172,7 @@ export async function createWorld(canvas, {
         hp01,
         rank: rank | 0,
         teamColor: teamColor || (side != null ? teamColorForSide(side) : null),
+        teamPage: side != null ? teamPageForSide(side) : null,
         buildPercent,
       }
       units.set(unitId, rec)
@@ -1453,6 +1480,7 @@ export async function createWorld(canvas, {
         if (su.buildSpin != null) u.buildSpin = !!su.buildSpin
         if (su.teamColor) u.teamColor = su.teamColor
         else if (su.side != null) u.teamColor = teamColorForSide(su.side)
+        if (su.side != null) u.teamPage = teamPageForSide(su.side)
         if (Array.isArray(su.pieceNames)) u.pieceNames = su.pieceNames
         if (u.model) {
           if (u._pieceCacheModel !== u.model) {
@@ -1695,7 +1723,7 @@ export async function createWorld(canvas, {
         kind: 'build',
         from: fromUnitId != null ? { unitId: fromUnitId, nano: true } : { pos: from },
         to: toUnitId != null ? { unitId: toUnitId } : { pos: to },
-        color: color || [0.3, 1.5, 0.55, 1.0],
+        color: color || latheStyle.beam,
         accMs: 0,
         rng: mulberry32(featureSeed(String(key), 7, 13)),
       })
@@ -1712,7 +1740,7 @@ export async function createWorld(canvas, {
         kind: 'reclaim',
         from: fromUnitId != null ? { unitId: fromUnitId, nano: true } : { pos: from },
         to: corpseId != null ? { corpseId } : (toUnitId != null ? { unitId: toUnitId } : { pos: to }),
-        color: color || [0.55, 1.7, 0.55, 0.9],
+        color: color || latheStyle.reclaim,
         accMs: 0,
         rng: mulberry32(featureSeed(String(key), 17, 29)),
       })

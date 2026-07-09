@@ -34,6 +34,30 @@ export const TA_TEAM_SIDES = [
   { side: 7, key: 'black',  label: 'Black',  rgb: [0.10, 0.10, 0.12], swatchCss: '#1a1a1f' },
 ]
 
+// TAK_TEAM_SIDES — Total Annihilation: Kingdoms' player-colour table.
+//
+// TA:K does NOT recolour by hue-shift: each team-marked texture is a
+// ten-frame GAF page, one authored frame per player colour, and the game
+// binds the owning player's frame.  Each entry here therefore carries
+// `page` (the frame index a renderer should bind for that side) and leaves
+// `rgb` null so the hue-shift path stays off — TA:K art is full-colour and
+// a blue-hue shift would repaint capes, water and banners wholesale.
+// `display` is the frame's dominant colour (sampled from the shipped logo
+// pages) for surfaces that draw the side AS a colour: impostor dots,
+// minimap markers, HUD swatches.
+export const TAK_TEAM_SIDES = [
+  { side: 0, key: 'blue',   label: 'Blue',   rgb: null, page: 0, display: [0.30, 0.38, 0.59], swatchCss: '#4c6296' },
+  { side: 1, key: 'red',    label: 'Red',    rgb: null, page: 1, display: [0.68, 0.11, 0.06], swatchCss: '#ad1c0f' },
+  { side: 2, key: 'white',  label: 'White',  rgb: null, page: 2, display: [0.75, 0.75, 0.75], swatchCss: '#bfbfbf' },
+  { side: 3, key: 'green',  label: 'Green',  rgb: null, page: 3, display: [0.11, 0.57, 0.35], swatchCss: '#1c9158' },
+  { side: 4, key: 'navy',   label: 'Navy',   rgb: null, page: 4, display: [0.06, 0.20, 0.48], swatchCss: '#0f337a' },
+  { side: 5, key: 'purple', label: 'Purple', rgb: null, page: 5, display: [0.45, 0.15, 0.30], swatchCss: '#73264d' },
+  { side: 6, key: 'gold',   label: 'Gold',   rgb: null, page: 6, display: [0.72, 0.58, 0.24], swatchCss: '#b8943d' },
+  { side: 7, key: 'black',  label: 'Black',  rgb: null, page: 7, display: [0.14, 0.14, 0.15], swatchCss: '#242426' },
+  { side: 8, key: 'orange', label: 'Orange', rgb: null, page: 8, display: [0.66, 0.35, 0.14], swatchCss: '#a85a24' },
+  { side: 9, key: 'brown',  label: 'Brown',  rgb: null, page: 9, display: [0.45, 0.33, 0.11], swatchCss: '#73541c' },
+]
+
 // TEAM_SIDES is the live table. Exported as a const binding whose CONTENTS
 // setTeamSides() replaces in place, so existing imports always see the
 // current configuration.
@@ -70,8 +94,18 @@ const _NEUTRAL_RGB = [0.227, 0.424, 0.839]
 // units collapse to a single coloured dot.
 export function displayRgbForSide(side) {
   const entry = TEAM_SIDES[(side | 0)]
+  if (entry && entry.display) return entry.display
   if (entry && entry.rgb) return entry.rgb
   return _NEUTRAL_RGB
+}
+
+// teamPageForSide returns the per-player texture-page (GAF frame) index for
+// the side, or null when the active game recolours by hue-shift instead
+// (TA).  Renderers append `&team=<page>` to a team-paged texture's bind key
+// so the cache resolves the owning player's authored frame.
+export function teamPageForSide(side) {
+  const entry = TEAM_SIDES[(side | 0)]
+  return entry && entry.page != null ? entry.page : null
 }
 
 // sideForKey looks a side up by string key ('blue', 'red', ...).

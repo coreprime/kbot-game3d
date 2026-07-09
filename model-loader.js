@@ -61,6 +61,10 @@ export class ModelLoader {
     // team/logo textures resolve against the unit's own side GAF. The query
     // is baked into every texture key this load produces.
     this._texQuery = data.textureQuery || ''
+    // teamTextures (pack format v7) lists the textures that are per-player
+    // colour PAGES — draw groups over them get teamPaged so the renderer
+    // can bind the owning player's frame (`&team=<page>` on the bind key).
+    this._teamTexSet = new Set((data.teamTextures || []).map((n) => String(n).toLowerCase()))
     // Model-level geometry accumulator: every piece's draw groups append
     // their interleaved vertices here and record a [first, count) slice.
     // ONE VBO per model then serves every group — the renderer binds and
@@ -140,7 +144,15 @@ export class ModelLoader {
       // Fire-and-forget — the renderer is happy to draw fallbacks
       // until the real PNGs land.  ensure() resolves once they have.
       const q = this._texQuery
-      this.textureCache.ensure(q ? data.textures.map((n) => `${n}?${q}`) : data.textures)
+      const keys = q ? data.textures.map((n) => `${n}?${q}`) : data.textures.slice()
+      // Team pages prefetch too (all ten player colours — tiny PNGs), so a
+      // recolour-by-page render never blocks on a lazy mid-frame fetch.
+      for (const n of data.teamTextures || []) {
+        for (let page = 0; page < 10; page++) {
+          keys.push(q ? `${n}?${q}&team=${page}` : `${n}?team=${page}`)
+        }
+      }
+      this.textureCache.ensure(keys)
     }
     return model
   }
@@ -501,6 +513,7 @@ export class ModelLoader {
           // hint re-apply, which reads `g.texture`).
           textureName: bucket.bindName || bucket.texture || null,
           texture: bucket.texture || null,
+          teamPaged: !!bucket.teamPaged,
           color: bucket.color,
           isDecal: !!(bucket.texture && decals.has(bucket.texture.toLowerCase())),
           depthTier: bucket.depthTier || 0,
@@ -580,6 +593,11 @@ export class ModelLoader {
     let bucket = map.get(key)
     if (!bucket) {
       bucket = { interleaved: [], texture: texture || '', bindName: bindName || '', color }
+      // Per-player colour pages: the renderer appends `&team=<page>` to
+      // this group's bind key for entities whose side carries a page.
+      if (texture && this._teamTexSet && this._teamTexSet.has(String(texture).toLowerCase())) {
+        bucket.teamPaged = true
+      }
       map.set(key, bucket)
     }
     return bucket
