@@ -151,6 +151,13 @@ export const NANOLATHE_STYLES = {
 // factory pad — a slow, steady turn (~one revolution every ~10s).
 const BUILD_SPIN_RAD_S = 0.6
 
+// Shimmer build-style ambience cadence: 'shimmer-a' drips soft golden motes
+// rising off the veiled hull; 'shimmer-b' skitters sparkles along the
+// condensation line at the build front.  Deterministic per unit (seeded rng,
+// fx-clock accumulator) so renders reproduce exactly.
+const SHIMMER_MOTE_INTERVAL_MS = 110
+const SHIMMER_SPARK_INTERVAL_MS = 140
+
 // Steam-vent wisp cadence + drift.  A lazy geothermal plume: one soft
 // white puff every third of a second rising off the vent throat, phase-
 // staggered per vent.  Velocities come from each vent's own seeded rng
@@ -223,6 +230,12 @@ export async function createWorld(canvas, {
   if (game.projectileFallbackColors) setProjectileFallbackColors(game.projectileFallbackColors)
   // Construction palette: TA green nano vs TA:K gold casting.
   const latheStyle = NANOLATHE_STYLES[game.nanolatheStyle] || NANOLATHE_STYLES.green
+  // Construction presentation style: 'wireframe' (the default cut +
+  // scaffold), or one of the whole-hull shimmer previews ('shimmer-a'
+  // Gilded Veil / 'shimmer-b' Arcane Emergence) — see setBuildStyle.
+  const buildStyle = game.buildStyle === 'shimmer-a' || game.buildStyle === 'shimmer-b'
+    ? game.buildStyle
+    : 'wireframe'
 
   await loadWorlds()
   const palette = await TAPalette.load()
@@ -239,6 +252,9 @@ export async function createWorld(canvas, {
   const camera = new OrbitCamera({})
   renderer.setCamera(camera)
   await renderer.init()
+  if (buildStyle !== 'wireframe' && typeof renderer.setBuildStyle === 'function') {
+    renderer.setBuildStyle(buildStyle)
+  }
   // Track whether the caller pinned an environment. If they didn't, an
   // installed battlefield auto-selects a map-appropriate sky from its OTA
   // planet (see setTerrain) so the beyond-map background shows a sky/cloud
@@ -618,6 +634,9 @@ export async function createWorld(canvas, {
     worldBinding.explosions.step(dtMs)
     stepModelShots(modelShots, dtMs, { env: { waterY: waterY(), heightAt: terrainHeightAt } })
     _stepBeams(dtMs)
+    // Shimmer build styles carry live ambience (motes / line sparkles);
+    // the default wireframe style skips the walk entirely.
+    if (buildStyle !== 'wireframe') _stepBuildShimmerFx(dtMs)
     // Steam vents: lazy geothermal wisps off each vent throat.  Gated on
     // the feature toggle so hiding map features silences the plumes too.
     if (steamVents.length && !world._featuresOff) {
@@ -1012,6 +1031,63 @@ export async function createWorld(canvas, {
     }
   }
 
+  // _stepBuildShimmerFx drives the shimmer build styles' live ambience for
+  // every under-construction unit: Gilded Veil (shimmer-a) releases soft
+  // golden motes rising off the hull; Arcane Emergence (shimmer-b) pops
+  // sparkles along the condensation line at the build front.  Only runs when
+  // a shimmer style is selected — the default wireframe pipeline never pays
+  // for it.  Deterministic: per-unit seeded rng + an fx-clock accumulator.
+  const _stepBuildShimmerFx = (dtMs) => {
+    const interval = buildStyle === 'shimmer-a' ? SHIMMER_MOTE_INTERVAL_MS : SHIMMER_SPARK_INTERVAL_MS
+    const gold = latheStyle.buildFx
+    for (const u of units.values()) {
+      if (!u.model || u.buildPercent == null || u.buildPercent >= 100) continue
+      if (!u._shimmerFx) {
+        u._shimmerFx = {
+          accMs: 0,
+          rng: mulberry32(featureSeed(String(u.id), Math.round(u.x), Math.round(u.z))),
+        }
+      }
+      const fx = u._shimmerFx
+      fx.accMs += dtMs
+      const frac = Math.max(0, Math.min(1, u.buildPercent / 100))
+      const r = Math.max(4, (u.model.boundsRadius || 12) * 0.8)
+      const b = u.model.bounds
+      const minY = b && b.min ? b.min[1] : 0
+      const maxY = b && b.max ? b.max[1] : 20
+      const gy = u.grounded ? terrainHeightAt(u.x, u.z) : u.y
+      while (fx.accMs >= interval) {
+        fx.accMs -= interval
+        if (buildStyle === 'shimmer-a') {
+          const a = fx.rng() * Math.PI * 2
+          const d = Math.sqrt(fx.rng()) * r
+          worldBinding.particles.emit(SFX_NANO_PARTICLES, [
+            u.x + Math.cos(a) * d,
+            gy + minY + fx.rng() * (maxY - minY) * 0.85,
+            u.z + Math.sin(a) * d,
+          ], {
+            velocity: [(fx.rng() * 2 - 1) * 2.2, 9 + fx.rng() * 8, (fx.rng() * 2 - 1) * 2.2],
+            lifeMs: 950 + fx.rng() * 500,
+            color: [gold[0] * 1.6, gold[1] * 1.5, gold[2] * 1.2, 0.9],
+            size: 1.6 + fx.rng() * 1.2,
+          })
+        } else {
+          const lineY = gy + minY + (maxY - minY) * frac
+          const a = fx.rng() * Math.PI * 2
+          const d = r * (0.35 + fx.rng() * 0.65)
+          worldBinding.particles.emit(SFX_SPARK, [
+            u.x + Math.cos(a) * d,
+            lineY + (fx.rng() * 2 - 1) * 0.8,
+            u.z + Math.sin(a) * d,
+          ], {
+            color: [gold[0] * 1.8, gold[1] * 1.6, gold[2] * 1.1, 1],
+            lifeMs: 160 + fx.rng() * 120,
+          })
+        }
+      }
+    }
+  }
+
   // _buildShardModel shatters `sourceModel` into MANY small recentred shard
   // meshes (debris-fragments.js) and wraps them in a lightweight synthetic
   // Model the renderer draws exactly like a unit: each shard is a leaf Piece
@@ -1247,6 +1323,11 @@ export async function createWorld(canvas, {
             defs,
             heightAt: terrainHeightAt,
             cellWU: (terrain.cellWU || 16),
+            // Per-game feature dialect: 'tak' selects the TA:Kingdoms
+            // builders (palms/cypresses, henge stones, grass tufts, mana
+            // wisps; sound/wave markers skipped).  Absent → the TA table,
+            // byte-identical to before the style existed.
+            style: game.featureStyle || null,
           })
           renderer.setMapFeatures(field.batches)
           // Flat ground features (metal deposits, steam vents, scars…):

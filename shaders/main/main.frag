@@ -88,6 +88,15 @@ uniform float uOutputAlpha;   // 1 = fully opaque (default); < 1 fades the textu
 uniform float uBuildCutOn;
 uniform float uBuildCutY;
 uniform vec3  uBuildFxColor;
+// Construction shimmer styles (style-flagged alternatives to the wireframe
+// scaffold — see the renderer's setBuildStyle).  0 = off (classic cut +
+// wireframe).  1 = "Gilded Veil": the whole hull renders under a translucent
+// molten-gold overlay whose sheen sweeps the surface, thinning as the build
+// completes.  2 = "Arcane Emergence": the hull materialises bottom-up — solid
+// below the build front (uBuildCutY), a gold rim-lit ghost above it, with a
+// bright condensation band + sparkles at the front line.
+uniform float uBuildShimmer;
+uniform float uBuildFrac;     // 0..1 build progress for the shimmer ramps
 // uLightingTier — Phase 2 perf knob.  0 = full (rim + back/fill +
 // Blinn-Phong specular all contribute), 1 = cheap (Lambertian +
 // ambient only).  The renderer sets this to 1 for entities that the
@@ -672,12 +681,47 @@ void main() {
   // reflection nearly invisible.  The output alpha gates the build-
   // progress fade — below 100% build, uOutputAlpha = build/100
   // so the textured model fades in as construction completes.
-  if (uBuildCutOn > 0.5) {
+  float outAlpha = uOutputAlpha;
+  if (uBuildCutOn > 0.5 && uBuildShimmer < 0.5) {
     if (vWorldPos.y > uBuildCutY) discard;
     float latheBand = 1.0 - smoothstep(0.0, 2.2, uBuildCutY - vWorldPos.y);
     col = mix(col, uBuildFxColor * 1.6, latheBand * 0.75);
+  } else if (uBuildShimmer > 1.5) {
+    // "Arcane Emergence" — bottom-up materialisation.  Below the front the
+    // hull is real; above it a warm gold ghost: fresnel edge glow over a
+    // dimmed core with a slow pulse, so the whole silhouette reads while
+    // clearly not-yet-solid.  The front itself is a bright condensation
+    // band with a scatter of time-hashed sparkles.
+    float above = vWorldPos.y - uBuildCutY;
+    if (above > 0.0) {
+      float fres = pow(1.0 - max(dot(N, V), 0.0), 2.0);
+      float corePulse = 0.72 + 0.28 * sin(uTime * 2.4 + vWorldPos.y * 0.06);
+      vec3 ghost = col * 0.16 + uBuildFxColor * (0.14 + 0.85 * fres) * corePulse;
+      col = ghost;
+      outAlpha *= 0.62;
+    }
+    float band = 1.0 - smoothstep(0.0, 1.9, abs(above));
+    // Sparkles: a cheap hash over a coarse world grid, re-rolled a few
+    // times a second, thresholded so only a sparse scatter of cells pop.
+    vec2 cell = floor(vWorldPos.xz * 2.6) + floor(vWorldPos.y * 2.6) + floor(uTime * 6.0);
+    float h = fract(sin(dot(cell, vec2(12.9898, 78.233))) * 43758.5453);
+    float spark = step(0.92, h);
+    col += uBuildFxColor * band * (1.35 + 2.2 * spark);
+  } else if (uBuildShimmer > 0.5) {
+    // "Gilded Veil" — the whole hull under a translucent molten-gold
+    // overlay.  A diagonal sheen band sweeps the surface continuously; the
+    // veil's weight fades as the build completes (uBuildFrac -> 1) while
+    // the hull's own colour takes over underneath.
+    float sweepPhase = dot(vWorldPos, vec3(0.16, 0.55, 0.16)) - uTime * 3.1;
+    float sheen = smoothstep(0.45, 1.0, sin(sweepPhase));
+    float sheen2 = smoothstep(0.6, 1.0, sin(sweepPhase * 0.37 + 1.7));
+    float veil = 0.18 + 0.62 * (1.0 - uBuildFrac);
+    float fres = pow(1.0 - max(dot(N, V), 0.0), 2.0);
+    vec3 gold = uBuildFxColor;
+    col = mix(col, gold * (0.75 + 0.85 * sheen + 0.35 * fres), veil);
+    col += gold * (sheen * 0.55 + sheen2 * 0.3) * veil;
   }
-  gl_FragColor = vec4(col, uOutputAlpha);
+  gl_FragColor = vec4(col, outAlpha);
 #ifdef LOGDEPTH_FRAGMENT
   logDepthFragmentBiased(uDepthBias);
 #endif
