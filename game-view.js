@@ -25,9 +25,16 @@ export function gameViewConfig(gameId) {
     case 'takingdoms':
       // TA:K recolours by per-player texture pages (TAK_TEAM_SIDES carries
       // the page index per side), constructs with gold "magic" casting
-      // instead of TA's green nanolathe, and dresses its maps with the
-      // TA:K feature dialect (palms/cypresses, henge stones, grass tufts).
-      return { teamSides: TAK_TEAM_SIDES, nanolatheStyle: 'gold', featureStyle: 'tak' }
+      // instead of TA's green nanolathe, dresses its maps with the TA:K
+      // feature dialect (palms/cypresses, henge stones, grass tufts), and
+      // shows buildings under construction as a whole hull beneath the
+      // molten-gold Gilded Veil rather than a wireframe scaffold.
+      return {
+        teamSides: TAK_TEAM_SIDES,
+        nanolatheStyle: 'gold',
+        featureStyle: 'tak',
+        buildStyle: 'shimmer-a',
+      }
     default:
       return {}
   }
