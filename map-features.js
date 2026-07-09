@@ -766,6 +766,491 @@ function buildSpriteDecal(decalSink, rng, { x, z, def, r, heightAt }) {
   }
 }
 
+// ── TA:K feature families (style: 'tak') ────────────────────────────────
+//
+// TA:Kingdoms authors its map dressing with different conventions from TA:
+// features carry a `world` (aramon/veruna/taros/zhon/creon) that sets the
+// biome palette, tree sprites are tall cypresses and broad palms rather
+// than conifers, the lodestone sockets are ringed by "henge" stones
+// (weathered standing/fallen slabs, some arched), grass tufts and animated
+// mana wisps dot the ground, and pure sound markers ("noise") plus sea-foam
+// sprites ("waves") have NO sensible upright geometry at all.  The shared
+// TA builders made all of that read as spikes and grey lumps.  These
+// builders are only reached when buildFeatureField is called with
+// style:'tak', so TA output stays byte-identical.
+
+// Per-world biome tints (leaf variants, trunk, stone, moss).  Unknown
+// worlds fall back to the temperate aramon read.
+const TAK_WORLD_TINTS = {
+  aramon: {
+    leaf: [[0.18, 0.40, 0.13], [0.24, 0.44, 0.14], [0.30, 0.40, 0.12], [0.15, 0.35, 0.15]],
+    trunk: [0.30, 0.21, 0.12],
+    stone: [0.54, 0.51, 0.46],
+    wall: [0.62, 0.56, 0.46],
+    roof: [0.46, 0.30, 0.18],
+  },
+  veruna: {
+    leaf: [[0.13, 0.38, 0.18], [0.17, 0.45, 0.19], [0.23, 0.48, 0.15], [0.11, 0.33, 0.20]],
+    trunk: [0.36, 0.26, 0.15],
+    stone: [0.58, 0.58, 0.54],
+    wall: [0.66, 0.60, 0.50],
+    roof: [0.42, 0.28, 0.16],
+  },
+  taros: {
+    leaf: [[0.30, 0.22, 0.11], [0.36, 0.19, 0.09], [0.25, 0.15, 0.09]],
+    trunk: [0.18, 0.13, 0.10],
+    stone: [0.36, 0.33, 0.32],
+    wall: [0.38, 0.33, 0.30],
+    roof: [0.25, 0.16, 0.12],
+  },
+  zhon: {
+    leaf: [[0.30, 0.38, 0.13], [0.38, 0.41, 0.15], [0.27, 0.33, 0.11]],
+    trunk: [0.33, 0.25, 0.14],
+    stone: [0.56, 0.51, 0.42],
+    wall: [0.58, 0.50, 0.38],
+    roof: [0.44, 0.34, 0.18],
+  },
+  creon: {
+    leaf: [[0.20, 0.36, 0.22], [0.26, 0.42, 0.20], [0.17, 0.31, 0.19]],
+    trunk: [0.28, 0.22, 0.14],
+    stone: [0.52, 0.52, 0.55],
+    wall: [0.55, 0.55, 0.58],
+    roof: [0.34, 0.36, 0.42],
+  },
+}
+const TAK_MOSS = [0.25, 0.38, 0.19]
+
+const takTints = (def) => TAK_WORLD_TINTS[String(def?.world || '').toLowerCase()] || TAK_WORLD_TINTS.aramon
+
+// trunkColumn — a gently curving tapered trunk built from stacked segments
+// that drift toward a per-instance lean direction.  Reads as an organic
+// bole from any angle (the single jittered box read as a fence post).
+function trunkColumn(sink, rng, { x, y, z, h, r0, r1, segs = 5, lean = 0, leanAmt = 0, color }) {
+  let px = x, pz = z, py = y
+  const segH = h / segs
+  const yaw0 = rng() * Math.PI
+  for (let i = 0; i < segs; i++) {
+    const t = (i + 1) / segs
+    const rr = r0 + (r1 - r0) * (i / Math.max(1, segs - 1))
+    // Generous vertical overlap + a shared base yaw keep the curved stack
+    // reading as one bole instead of a staircase of loose crates.
+    box(sink, rng, {
+      x: px, y: py, z: pz, w: rr * 2, h: segH * 1.35, d: rr * 2,
+      yaw: yaw0 + i * 0.12, color: shade(color, 0.94 + rng() * 0.12),
+    })
+    px = x + Math.cos(lean) * leanAmt * Math.pow(t, 1.6)
+    pz = z + Math.sin(lean) * leanAmt * Math.pow(t, 1.6)
+    py += segH
+  }
+  return [px, py, pz]
+}
+
+// frond — one drooping palm blade: two tapering segments rising out from
+// the crown then bending down toward the tip.  Both windings are emitted so
+// the thin blade never vanishes edge-on.
+function frond(sink, rng, { x, y, z, ang, len, droop, width, color, tipColor }) {
+  const dx = Math.cos(ang), dz = Math.sin(ang)
+  // Perpendicular in the ground plane for blade width.
+  const nx = -dz, nz = dx
+  const midL = len * 0.45
+  const p0 = [x, y, z]
+  const mid = [x + dx * midL, y + len * 0.16, z + dz * midL]
+  const tip = [x + dx * len, y + len * (0.16 - droop), z + dz * len]
+  const w0 = width, w1 = width * 0.6
+  const a0 = [p0[0] + nx * w0 * 0.4, p0[1], p0[2] + nz * w0 * 0.4]
+  const b0 = [p0[0] - nx * w0 * 0.4, p0[1], p0[2] - nz * w0 * 0.4]
+  const a1 = [mid[0] + nx * w1, mid[1], mid[2] + nz * w1]
+  const b1 = [mid[0] - nx * w1, mid[1], mid[2] - nz * w1]
+  const cTip = tipColor || shade(color, 1.25)
+  // Segment 1 (crown → mid), segment 2 (mid → tip), both sides.
+  sink.tri(a0, b0, a1, color)
+  sink.tri(b0, b1, a1, color)
+  sink.tri(b0, a0, a1, shade(color, 0.7))
+  sink.tri(b1, b0, a1, shade(color, 0.7))
+  sink.tri(a1, b1, tip, color, color, color, cTip)
+  sink.tri(b1, a1, tip, shade(color, 0.7), shade(color, 0.7), shade(color, 0.7), shade(cTip, 0.75))
+}
+
+// buildTakPalm — a coastal palm: curved trunk, a radiating crown of
+// drooping fronds, a couple of dark nut clusters at the crown.
+function buildTakPalm(sink, rng, opts) {
+  const { x, y, z, r, h } = opts
+  const tints = takTints(opts.def)
+  sink.material(0, 0.07)
+  const lean = rng() * Math.PI * 2
+  const trunk = jitterColor(rng, tints.trunk, 0.12)
+  const top = trunkColumn(sink, rng, {
+    x, y, z, h: h * 0.62, r0: Math.max(1.1, r * 0.13), r1: Math.max(0.8, r * 0.08),
+    segs: 5, lean, leanAmt: r * (0.18 + rng() * 0.16), color: trunk,
+  })
+  const leaf = jitterColor(rng, tints.leaf[(rng() * tints.leaf.length) | 0], 0.14)
+  const fronds = 7 + ((rng() * 3) | 0)
+  const crownY = top[1]
+  for (let i = 0; i < fronds; i++) {
+    const a = (i / fronds) * Math.PI * 2 + rng() * 0.5
+    frond(sink, rng, {
+      x: top[0], y: crownY, z: top[2], ang: a,
+      len: r * (0.85 + rng() * 0.4), droop: 0.5 + rng() * 0.25,
+      width: r * 0.16, color: shade(leaf, 0.85 + rng() * 0.3),
+    })
+  }
+  // A short upright tuft closes the crown's centre.
+  cone(sink, rng, { x: top[0], y: crownY - 0.5, z: top[2], r: r * 0.2, h: h * 0.16, n: 4, color: shade(leaf, 1.05), wobble: 0.2 })
+  // Nut cluster under the crown.
+  blob(sink, rng, { x: top[0] + (rng() - 0.5) * 2, y: crownY - 2.2, z: top[2] + (rng() - 0.5) * 2, r: Math.max(1, r * 0.1), h: 1.6, color: shade(tints.trunk, 0.7) })
+}
+
+// buildTakCypress — the tall slender columnar tree (the VerTree01..03
+// silhouette): short trunk, then a stack of narrow overlapping foliage
+// domes tapering to a tip.
+function buildTakCypress(sink, rng, opts) {
+  const { x, y, z, r, h } = opts
+  const tints = takTints(opts.def)
+  sink.material(0, 0.07)
+  const trunk = jitterColor(rng, tints.trunk, 0.12)
+  const trunkH = h * 0.14
+  trunkColumn(sink, rng, { x, y, z, h: trunkH, r0: Math.max(0.9, r * 0.16), r1: Math.max(0.7, r * 0.12), segs: 2, color: trunk })
+  const leaf = jitterColor(rng, tints.leaf[(rng() * tints.leaf.length) | 0], 0.16)
+  // Stacked narrow domes: widest just above the trunk, tapering upward.
+  const tiers = 3 + ((rng() * 2) | 0)
+  const folH = h - trunkH
+  let ty = y + trunkH * 0.8
+  for (let i = 0; i < tiers; i++) {
+    const t = i / tiers
+    const tr = r * (0.95 - t * 0.55) * (0.9 + rng() * 0.2)
+    const th = folH / tiers * 1.5
+    dome(sink, rng, {
+      x: x + (rng() - 0.5) * r * 0.12, y: ty, z: z + (rng() - 0.5) * r * 0.12,
+      r: tr, h: th, n: 6, rings: 2, color: shade(leaf, 0.9 + t * 0.22), wobble: 0.18,
+    })
+    ty += folH / tiers * 0.92
+  }
+  // Crown tip.
+  cone(sink, rng, { x, y: ty - folH * 0.06, z, r: r * 0.3, h: folH * 0.2, n: 5, color: shade(leaf, 1.18), wobble: 0.2 })
+}
+
+// buildTakTree routes a TA:K tree def onto the palm or cypress silhouette
+// from its sprite aspect: the tall narrow sprites (VerTree01..03 etc.) are
+// columnar cypresses, the wide ones (VerTree06's broad crown) palms.
+function buildTakTree(sink, rng, opts) {
+  const def = opts.def
+  const w = def && def.spriteW > 0 ? def.spriteW : 32
+  const h = def && def.spriteH > 0 ? def.spriteH : 60
+  if (h / w >= 1.6) buildTakCypress(sink, rng, opts)
+  else buildTakPalm(sink, rng, opts)
+}
+
+// slab — an arbitrarily tilted, tapered stone block (the henge primitive):
+// eight transformed corners, six faces, per-face shading, and a moss tint
+// creeping up from the base so the stone reads ancient.
+function slab(sink, rng, { x, y, z, w, h, d, yaw = 0, tilt = 0, tiltDir = 0, taper = 0.82, color, moss = TAK_MOSS }) {
+  // Bed the stone into the ground: a small constant plus extra for tilted
+  // stones, so a leaning or fallen slab never floats on its pivot point.
+  y -= 0.6 + Math.sin(Math.min(Math.abs(tilt), 1.35)) * h * 0.14
+  const cy = Math.cos(yaw), sy = Math.sin(yaw)
+  const ct = Math.cos(tilt), st = Math.sin(tilt)
+  const cd = Math.cos(tiltDir), sd = Math.sin(tiltDir)
+  // Local corner → world: taper the top, tilt about the (cd, sd) ground
+  // axis, yaw, then translate.  Local y in [0, h].
+  const P = (lx, ly, lz) => {
+    const k = 1 - (1 - taper) * (ly / h)
+    let px = lx * k, py = ly, pz = lz * k
+    // Tilt about the horizontal axis perpendicular to (cd, 0, sd):
+    // rotate the (along, y) pair where along = px*cd + pz*sd.
+    const along = px * cd + pz * sd
+    const perp = -px * sd + pz * cd
+    const along2 = along * ct + py * st
+    const py2 = -along * st + py * ct
+    px = along2 * cd - perp * sd
+    pz = along2 * sd + perp * cd
+    py = py2
+    // Yaw + translate.
+    return [x + px * cy - pz * sy, y + py, z + px * sy + pz * cy]
+  }
+  const hw = w / 2, hd = d / 2
+  const corners = [
+    P(-hw, 0, -hd), P(hw, 0, -hd), P(hw, 0, hd), P(-hw, 0, hd),         // base 0..3
+    P(-hw, h, -hd), P(hw, h, -hd), P(hw, h, hd), P(-hw, h, hd),         // top 4..7
+  ]
+  // Moss tint on the base ring vertices, clean stone at the top.
+  const mossy = [
+    color[0] * 0.55 + moss[0] * 0.45,
+    color[1] * 0.55 + moss[1] * 0.45,
+    color[2] * 0.55 + moss[2] * 0.45,
+  ]
+  const quad = (a, b, c, dd, k) => {
+    const col = shade(color, k)
+    const base = shade(mossy, k)
+    // Corners 0..3 are the base ring — tint them mossy.  Winding is
+    // reversed (a,c,b / a,dd,c) so every face normal points OUTWARD —
+    // the naive order lit the whole stone from inside and it read black.
+    const cols = [a, b, c, dd].map((i) => (i < 4 ? base : col))
+    sink.tri(corners[a], corners[c], corners[b], col, cols[0], cols[2], cols[1])
+    sink.tri(corners[a], corners[dd], corners[c], col, cols[0], cols[3], cols[2])
+  }
+  quad(4, 5, 6, 7, 1.06)          // top
+  quad(0, 1, 5, 4, 0.84)          // sides
+  quad(1, 2, 6, 5, 0.72)
+  quad(2, 3, 7, 6, 0.8)
+  quad(3, 0, 4, 7, 0.68)
+}
+
+// buildTakHenge — the lodestone-socket dressing: a ring of weathered
+// standing stones with the odd leaning or fallen slab, and — on the big
+// square sockets — a proper arch (two uprights bridged by a lintel).
+// Footprint drives the ring radius, the TDF height the stone height.
+function buildTakHenge(sink, rng, opts) {
+  const { x, y, z, r, h, heightAt } = opts
+  const tints = takTints(opts.def)
+  const hAt = typeof heightAt === 'function' ? heightAt : () => y
+  // A whisper of emissive lifts back-lit faces off pure black against the
+  // albedo-lit sand (the feature sun term is directional; stones otherwise
+  // silhouette to void in low shots).  TA:K-only vertex data — the shared
+  // shader is untouched.
+  sink.material(0.12, 0.16)
+  const stone = jitterColor(rng, tints.stone, 0.08)
+  const fx = Math.max(1, (opts.def && opts.def.footprintX) | 0)
+  const fz = Math.max(1, (opts.def && opts.def.footprintZ) | 0)
+  const minFp = Math.min(fx, fz)
+  const ringR = Math.max(6, r * 1.15)
+  const phase = rng() * Math.PI * 2
+  // Morphology from the def's proportions:
+  //   big square + tall  → the ARCH (two stout uprights + lintel) + ring
+  //   tall narrow        → one/two tapering monoliths (the curved-tusk art)
+  //   everything else    → a cluster of standing / leaning / fallen slabs
+  const arch = minFp >= 4 && h >= 40
+  const monolith = !arch && h >= 50
+  if (arch) {
+    const aa = phase
+    const gap = ringR * 0.5
+    const uw = Math.max(3.4, ringR * 0.3)
+    const ux1 = x + Math.cos(aa) * gap, uz1 = z + Math.sin(aa) * gap
+    const ux2 = x - Math.cos(aa) * gap, uz2 = z - Math.sin(aa) * gap
+    const uh = h * (0.82 + rng() * 0.18)
+    slab(sink, rng, { x: ux1, y: hAt(ux1, uz1), z: uz1, w: uw, h: uh, d: uw * 0.75, yaw: aa, tilt: (rng() - 0.5) * 0.06, tiltDir: rng() * Math.PI * 2, taper: 0.88, color: stone })
+    slab(sink, rng, { x: ux2, y: hAt(ux2, uz2), z: uz2, w: uw, h: uh, d: uw * 0.75, yaw: aa, tilt: (rng() - 0.5) * 0.06, tiltDir: rng() * Math.PI * 2, taper: 0.88, color: shade(stone, 0.95) })
+    // Lintel: a slim capstone bridging the upright tops.
+    const mx = (ux1 + ux2) / 2, mz = (uz1 + uz2) / 2
+    const lidY = Math.max(hAt(ux1, uz1), hAt(ux2, uz2)) + uh - 0.6
+    slab(sink, rng, {
+      x: mx, y: lidY, z: mz, w: gap * 2 + uw, h: Math.min(4.5, Math.max(2, uh * 0.1)), d: uw * 0.8,
+      yaw: aa, tilt: (rng() - 0.5) * 0.04, tiltDir: aa + Math.PI / 2, taper: 0.96, color: shade(stone, 1.06),
+    })
+  } else if (monolith) {
+    // One or two tall tapering monoliths, leaning gently like the art's
+    // curved tusks.  Stacked slab segments with an increasing tilt sell
+    // the curve without real curved geometry.
+    const count = fx !== fz && Math.max(fx, fz) >= 3 ? 2 : 1
+    for (let m = 0; m < count; m++) {
+      const off = count === 1 ? 0 : ringR * 0.45
+      const oa = phase + m * Math.PI
+      const bx = x + Math.cos(oa) * off, bz = z + Math.sin(oa) * off
+      const leanDir = rng() * Math.PI * 2
+      const segs = 3
+      const mh = h * (0.85 + rng() * 0.2)
+      let sy = hAt(bx, bz)
+      let sw = Math.max(3, ringR * 0.32)
+      let lean = 0.04 + rng() * 0.05
+      let px = bx, pz = bz
+      for (let i = 0; i < segs; i++) {
+        slab(sink, rng, {
+          x: px, y: sy, z: pz, w: sw, h: mh / segs * 1.18, d: sw * 0.8,
+          yaw: leanDir, tilt: lean, tiltDir: leanDir, taper: 0.8,
+          color: shade(stone, 0.92 + i * 0.07),
+        })
+        const step = mh / segs
+        px += Math.cos(leanDir) * Math.sin(lean) * step
+        pz += Math.sin(leanDir) * Math.sin(lean) * step
+        sy += step * Math.cos(lean) - 0.6
+        sw *= 0.78
+        lean += 0.09 + rng() * 0.06
+      }
+    }
+  }
+  // Ring stones: standing, leaning and fallen slabs scattered on the ring.
+  const n = arch ? 3 + ((rng() * 2) | 0) : monolith ? 1 + ((rng() * 2) | 0) : 3 + ((rng() * 3) | 0)
+  for (let i = 0; i < n; i++) {
+    const a = phase + Math.PI * 0.35 + (i / n) * Math.PI * 2 + rng() * 0.5
+    const d = ringR * (0.8 + rng() * 0.4)
+    const sx = x + Math.cos(a) * d, sz = z + Math.sin(a) * d
+    const roll = rng()
+    // Most stones stand, some lean, a few lie toppled (flatter + wider so
+    // they read as fallen slabs, not scattered sticks).
+    const fallen = roll >= 0.85
+    const tilt = roll < 0.55 ? rng() * 0.1 : !fallen ? 0.25 + rng() * 0.3 : 1.35 + rng() * 0.15
+    const sh = h * (0.32 + rng() * 0.35) * (fallen ? 0.7 : 1)
+    slab(sink, rng, {
+      x: sx, y: hAt(sx, sz), z: sz,
+      w: Math.max(2.4, ringR * (0.18 + rng() * 0.1)), h: sh, d: Math.max(1.8, ringR * (0.12 + rng() * 0.08)),
+      yaw: a + rng() * 0.8, tilt, tiltDir: rng() * Math.PI * 2,
+      color: shade(stone, 0.9 + rng() * 0.18),
+    })
+  }
+  // Rubble pebbles ground the ring.
+  const pebbles = 2 + ((rng() * 3) | 0)
+  for (let i = 0; i < pebbles; i++) {
+    const a = rng() * Math.PI * 2
+    const d = ringR * (0.5 + rng() * 0.7)
+    const px = x + Math.cos(a) * d, pz = z + Math.sin(a) * d
+    blob(sink, rng, { x: px, y: hAt(px, pz), z: pz, r: 1 + rng() * 1.8, h: 1 + rng(), color: shade(stone, 0.85), squash: 0.6 })
+  }
+  sink.material(0, 0)
+}
+
+// buildTakHut — the villages' dwellings: light plastered walls under a
+// deep hipped roof (the roof is most of the sprite's read), a stubby
+// chimney on the bigger cottages.  Large footprints become a two-mass
+// hall; everything keeps the warm biome wall/roof tints.
+function buildTakHut(sink, rng, opts) {
+  const { x, y, z, r, h } = opts
+  const tints = takTints(opts.def)
+  // Same back-light fill trick as the henge stones (see there).
+  sink.material(0.05, 0.14)
+  const wall = jitterColor(rng, tints.wall, 0.08)
+  const roof = jitterColor(rng, tints.roof, 0.1)
+  const yaw = rng() * Math.PI
+  const fx = Math.max(1, (opts.def && opts.def.footprintX) | 0)
+  const fz = Math.max(1, (opts.def && opts.def.footprintZ) | 0)
+  const big = Math.max(fx, fz) >= 8
+  const wallH = Math.min(h * 0.42, r * 0.9)
+  const roofH = Math.min(h * 0.55, r * 1.1)
+  const place = (px, pz, w, d, k) => {
+    box(sink, rng, { x: px, y, z: pz, w, h: wallH * k, d, yaw, color: wall, roofColor: shade(wall, 0.9) })
+    // Hipped roof: a 4-gon cone over the walls, oversailing the eaves.
+    cone(sink, rng, {
+      x: px, y: y + wallH * k - 0.4, z: pz, r: Math.max(w, d) * 0.72, h: roofH * k,
+      n: 4, color: roof, tipColor: shade(roof, 1.15), baseShade: 0.72, wobble: 0.04,
+    })
+  }
+  place(x, z, r * 1.5, r * 1.2, 1)
+  if (big) {
+    // A second, lower wing off one gable end.
+    const a = yaw + Math.PI / 2
+    const d = r * 0.95
+    place(x + Math.cos(a) * d, z + Math.sin(a) * d, r * 1.0, r * 0.85, 0.75)
+  }
+  // Chimney stub.
+  if (r > 8) {
+    const ca = yaw + rng() * Math.PI
+    box(sink, rng, {
+      x: x + Math.cos(ca) * r * 0.45, y: y + wallH * 0.8, z: z + Math.sin(ca) * r * 0.45,
+      w: 2.2, h: roofH * 0.7, d: 2.2, yaw, color: shade(tints.stone, 0.95),
+    })
+  }
+  sink.material(0, 0)
+}
+
+// buildTakMana — the animating mana-wisp features: a small cluster of
+// softly glowing crystals rising off a mossy base.  The emissive channel
+// lets the bloom pass halo them at night/cinematic.
+function buildTakMana(sink, rng, opts) {
+  const { x, y, z, r } = opts
+  const tints = takTints(opts.def)
+  const glow = [0.55, 0.95, 0.62]
+  sink.material(0.25, 0.55)
+  const n = 3 + ((rng() * 2) | 0)
+  for (let i = 0; i < n; i++) {
+    const a = rng() * Math.PI * 2
+    const d = rng() * r * 0.45
+    cone(sink, rng, {
+      x: x + Math.cos(a) * d, y, z: z + Math.sin(a) * d,
+      r: Math.max(0.7, r * 0.14), h: 3.5 + rng() * r * 0.8, n: 4,
+      color: jitterColor(rng, glow, 0.12), tipColor: shade(glow, 1.5), baseShade: 0.5, wobble: 0.1,
+    })
+  }
+  sink.material(0, 0)
+  blob(sink, rng, { x, y: y - 0.4, z, r: r * 0.5, h: 1.2, color: shade(tints.stone, 0.75), squash: 0.5 })
+}
+
+// buildTakGrass — a low fan of blade tufts (the VerGrass sprites), never
+// the grey boulder the rock fallback used to produce.
+function buildTakGrass(sink, rng, opts) {
+  const { x, y, z, r } = opts
+  const tints = takTints(opts.def)
+  sink.material(0, 0.07)
+  const leaf = jitterColor(rng, tints.leaf[(rng() * tints.leaf.length) | 0], 0.2)
+  const blades = 5 + ((rng() * 4) | 0)
+  const spread = Math.min(6, r * 0.7)
+  for (let i = 0; i < blades; i++) {
+    const a = rng() * Math.PI * 2
+    const d = rng() * spread
+    cone(sink, rng, {
+      x: x + Math.cos(a) * d, y, z: z + Math.sin(a) * d,
+      r: 0.35 + rng() * 0.3, h: 2.2 + rng() * 3.4, n: 3,
+      color: shade(leaf, 0.8 + rng() * 0.45), tipColor: shade(leaf, 1.3), baseShade: 0.7, wobble: 0.1,
+    })
+  }
+}
+
+// buildTakRock — a boulder pile with per-world stone tint: one main mass,
+// a stacked shoulder chunk and satellite pebbles, so the scatter reads as
+// weathered outcrop rather than a uniform grey lump.
+function buildTakRock(sink, rng, opts) {
+  const { x, y, z, r, h } = opts
+  const tints = takTints(opts.def)
+  sink.material(0.08, 0.12)
+  const col = jitterColor(rng, tints.stone, 0.14)
+  blob(sink, rng, { x, y, z, r, h: Math.max(h * 0.6, r * 0.7), color: col })
+  // A shoulder chunk half-merged into the main mass.
+  const a0 = rng() * Math.PI * 2
+  blob(sink, rng, {
+    x: x + Math.cos(a0) * r * 0.55, y: y + h * 0.12, z: z + Math.sin(a0) * r * 0.55,
+    r: r * (0.45 + rng() * 0.2), h: h * 0.45, color: shade(col, 0.9 + rng() * 0.15),
+  })
+  const n = 1 + ((rng() * 3) | 0)
+  for (let i = 0; i < n; i++) {
+    const a = rng() * Math.PI * 2
+    blob(sink, rng, {
+      x: x + Math.cos(a) * r * 1.25, y, z: z + Math.sin(a) * r * 1.25,
+      r: r * (0.18 + rng() * 0.18), h: h * 0.22, color: shade(col, 0.82), squash: 0.6,
+    })
+  }
+  sink.material(0, 0)
+}
+
+// takCategoryBuilder — the TA:K routing table.  Returns null for features
+// that must emit NO geometry (ambient-sound markers, animated sea-foam
+// sprites); anything unrecognised falls back to the shared TA table.
+function takCategoryBuilder(category, nameHint) {
+  const c = String(category || '').toLowerCase()
+  const n = String(nameHint || '').toLowerCase()
+  if (c === 'noise' || c === 'waves') return null
+  if (/henge/.test(n)) return buildTakHenge
+  if (c === 'mana') return buildTakMana
+  if (c === 'grasses' || /grass/.test(n)) return buildTakGrass
+  if (c === 'trees' || /tree|palm/.test(n)) return buildTakTree
+  if (c === 'rocks' || /rock|boulder|stone/.test(n)) return buildTakRock
+  if (c === 'plant' || c === 'plants') return buildBush
+  if (c === 'dwellings' || (c === 'buildings' && /hut|house|cottage|farm|build/.test(n))) return buildTakHut
+  return categoryBuilder(category, nameHint)
+}
+
+// takFeatureSizeWU — TA:K sizing: tree proportions come from the sprite
+// dims (the TDF heights are authored on a different scale and read as
+// spikes through the TA formula), henges from footprint + a tamed height,
+// grass stays low.  Everything else keeps the shared TA sizing.
+function takFeatureSizeWU(def, key) {
+  const cat = String(def?.category || '').toLowerCase()
+  if (cat === 'trees' || /tree|palm/.test(key)) {
+    const w = def && def.spriteW > 0 ? def.spriteW : 32
+    const h = def && def.spriteH > 0 ? def.spriteH : 60
+    return {
+      r: Math.max(6, Math.min(26, w * 0.38)),
+      h: Math.max(16, Math.min(95, h * 0.55)),
+    }
+  }
+  if (/henge/.test(key)) {
+    const base = featureSizeWU(def)
+    const hh = def && def.heightWU > 0 ? def.heightWU : 60
+    return { r: base.r, h: Math.max(14, Math.min(64, hh * 0.5)) }
+  }
+  if (cat === 'grasses' || /grass/.test(key)) {
+    const base = featureSizeWU(def)
+    return { r: Math.min(base.r, 7), h: 5 }
+  }
+  return featureSizeWU(def)
+}
+
 // categoryBuilder maps a features.json category onto a shape family.  The
 // category survey of the TA install groups into visual families; any
 // unknown category falls back to the rock read (safe from every angle).
@@ -866,7 +1351,8 @@ export function featureSizeWU(def) {
 // shouldn't turn the particle pool into a fog machine.
 const MAX_FIELD_EMITTERS = 128
 
-export function buildFeatureField({ features, defs = {}, heightAt = null, cellWU = FEATURE_CELL_WU } = {}) {
+export function buildFeatureField({ features, defs = {}, heightAt = null, cellWU = FEATURE_CELL_WU, style = null } = {}) {
+  const tak = style === 'tak'
   const batches = []
   const models = []
   const emitters = []
@@ -899,7 +1385,7 @@ export function buildFeatureField({ features, defs = {}, heightAt = null, cellWU
       placed++
       continue
     }
-    const { r, h } = featureSizeWU(def)
+    const { r, h } = tak ? takFeatureSizeWU(def, key) : featureSizeWU(def)
     // Flat ground feature WITH packed real sprite art → paint it as a
     // texture-conforming decal instead of faking it with geometry.
     if (def && def.sprite && isFlatGroundCategory(def.category, key)) {
@@ -916,8 +1402,16 @@ export function buildFeatureField({ features, defs = {}, heightAt = null, cellWU
       placed++
       continue
     }
-    const build = categoryBuilder(def ? def.category : '', key)
-    build(sink, rng, { x, y, z, r, h, heightAt: hAt })
+    const build = tak
+      ? takCategoryBuilder(def ? def.category : '', key)
+      : categoryBuilder(def ? def.category : '', key)
+    if (!build) {
+      // Deliberately invisible feature: TA:K sound markers ('noise') and
+      // animated sea-foam sprites ('waves') have no upright geometry.
+      skipped++
+      continue
+    }
+    build(sink, rng, { x, y, z, r, h, heightAt: hAt, def })
     // Steam vents carry a live wisp emitter on top of their baked decal —
     // the world drives it off the fx clock (deterministic per placement).
     if (build === buildVent && emitters.length < MAX_FIELD_EMITTERS) {

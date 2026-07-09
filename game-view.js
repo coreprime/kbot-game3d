@@ -24,9 +24,10 @@ export function gameViewConfig(gameId) {
     case 'tak':
     case 'takingdoms':
       // TA:K recolours by per-player texture pages (TAK_TEAM_SIDES carries
-      // the page index per side) and constructs with gold "magic" casting
-      // instead of TA's green nanolathe.
-      return { teamSides: TAK_TEAM_SIDES, nanolatheStyle: 'gold' }
+      // the page index per side), constructs with gold "magic" casting
+      // instead of TA's green nanolathe, and dresses its maps with the
+      // TA:K feature dialect (palms/cypresses, henge stones, grass tufts).
+      return { teamSides: TAK_TEAM_SIDES, nanolatheStyle: 'gold', featureStyle: 'tak' }
     default:
       return {}
   }

@@ -270,6 +270,22 @@ export class ModelRenderer {
     // green nano-wireframe overlay is drawn underneath / over (so
     // the unit reads as "still building").  100 = textured normally.
     this.buildPercent = 100
+    // buildStyle: how an under-construction entity is presented.
+    //   'wireframe' — the classic rising build-cut + fading wireframe
+    //                 scaffold (the default; TA nano green / TA:K gold).
+    //   'shimmer-a' — "Gilded Veil": the whole hull under a translucent
+    //                 molten-gold overlay with a sweeping sheen, firming
+    //                 to solid as the build completes.
+    //   'shimmer-b' — "Arcane Emergence": the hull as a gold rim-lit
+    //                 ghost materialising bottom-up behind a bright
+    //                 condensation line at the build front.
+    // Style-flagged so per-game config (create-world game.buildStyle)
+    // can preview the shimmer looks without changing the default.
+    this.buildStyle = 'wireframe'
+    // Per-entity shimmer state staged for #renderMain (0 off / 1 veil /
+    // 2 emergence) + the 0..1 build fraction the shader ramps on.
+    this._buildShimmer = 0
+    this._buildFrac = 1
     // groundMode: 'grid' (light-green TA-tile lattice), 'terrain'
     // (greenworld flat texture, tiled), or 'off' (no ground plane).
     this.groundMode = 'terrain'
@@ -703,6 +719,15 @@ export class ModelRenderer {
   setBuildPercent(percent) {
     this.buildPercent = Math.max(0, Math.min(100, +percent || 0))
     if (this.buildPercent < 100 && !this.running) this.start()
+    this.requestRedraw()
+  }
+
+  // setBuildStyle selects the under-construction presentation:
+  // 'wireframe' (default cut + scaffold), 'shimmer-a' (Gilded Veil) or
+  // 'shimmer-b' (Arcane Emergence).  Unknown values fall back to the
+  // default so a stale/typoed config can never blank the build visual.
+  setBuildStyle(style) {
+    this.buildStyle = style === 'shimmer-a' || style === 'shimmer-b' ? style : 'wireframe'
     this.requestRedraw()
   }
 
@@ -2361,7 +2386,32 @@ export class ModelRenderer {
         // the lathe line.  ent.buildFadeOnly opts an entity out of the
         // cut and into a plain alpha fade instead (flying debris).
         this._entityOpacity = (ent.opacity != null) ? Math.max(0, Math.min(1, ent.opacity)) : 1
-        if (_bpFrac < 1 && !ent.buildFadeOnly && this.model && this.model.bounds) {
+        // Shimmer build styles replace the cut + scaffold with a whole-hull
+        // gold treatment (see setBuildStyle); the default stays the classic
+        // wireframe presentation.
+        const _shimmer =
+          this.buildStyle !== 'wireframe' &&
+          _bpFrac < 1 && !ent.buildFadeOnly && this.model && this.model.bounds
+        if (_shimmer) {
+          const _bb = this.model.bounds
+          this._buildFrac = _bpFrac
+          this._buildFxColor = ent.buildFxColor || [1.0, 0.76, 0.28]
+          if (this.buildStyle === 'shimmer-b') {
+            // Arcane Emergence keeps a build front for the condensation
+            // line, but the shader ghosts (never discards) above it.
+            this._buildShimmer = 2
+            this._buildCut = t.y + _bb.min[1] + (_bb.max[1] - _bb.min[1]) * _bpFrac + 0.01
+          } else {
+            this._buildShimmer = 1
+            this._buildCut = null
+          }
+          // The whole hull is visible under the shimmer — no dark-hull
+          // exposure ramp; translucency comes from the output alpha, so
+          // the pass needs blending (depth writes stay on: the hull still
+          // self-sorts and occludes what's behind it acceptably).
+          gl.enable(gl.BLEND)
+          gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA)
+        } else if (_bpFrac < 1 && !ent.buildFadeOnly && this.model && this.model.bounds) {
           const _bb = this.model.bounds
           this._buildCut = t.y + _bb.min[1] + (_bb.max[1] - _bb.min[1]) * _bpFrac + 0.01
           this._buildFxColor = ent.buildFxColor || [0.35, 1.0, 0.6]
@@ -2371,7 +2421,10 @@ export class ModelRenderer {
           if (_bpFrac < 1) this.exposure = (this.exposure ?? 1) * (0.22 + 0.78 * _bpFrac)
         }
         this.#renderMain(this.renderMode === 'flat')
+        if (_shimmer) gl.disable(gl.BLEND)
         this._buildCut = null
+        this._buildShimmer = 0
+        this._buildFrac = 1
         this._entityOpacity = 1
         this.exposure = _savedExposure
         this._lodHideFlares = false
@@ -2380,8 +2433,9 @@ export class ModelRenderer {
         // wireframe over the hull that fades out as the build nears
         // completion (the classic TA nanolathe frame; the colour comes
         // from the entity's per-game build-FX tint, so TA reads green
-        // nano and TA:K reads gold casting).
-        if (this.buildPercent < 100) {
+        // nano and TA:K reads gold casting).  Shimmer styles replace the
+        // scaffold entirely.
+        if (this.buildPercent < 100 && !_shimmer) {
           const frac = Math.max(0, Math.min(1, this.buildPercent / 100))
           const c = ent.buildFxColor || [0.35, 1.0, 0.6]
           const g = this.gl
@@ -3840,7 +3894,18 @@ export class ModelRenderer {
     // the cubic alpha fade.  Either way the per-entity opacity channel
     // (flying debris fade-out) multiplies in.
     const _entOpacity = this._entityOpacity != null ? this._entityOpacity : 1
-    if (this._buildCut != null) {
+    // Shimmer build styles (setBuildStyle): mode + build fraction feed the
+    // shader's whole-hull gold treatments; 0 keeps the classic paths.
+    this.#u1f(this.uBuildShimmer, this._buildShimmer || 0)
+    this.#u1f(this.uBuildFrac, this._buildFrac != null ? this._buildFrac : 1)
+    if (this._buildShimmer === 1) {
+      // Gilded Veil: no cut — the whole hull renders translucent, firming
+      // toward solid as the build completes.
+      this.#u1f(this.uBuildCutOn, 0)
+      const bc = this._buildFxColor || [1.0, 0.76, 0.28]
+      this.#u3f(this.uBuildFxColor, bc[0], bc[1], bc[2])
+      this.#u1f(this.uMainOutputAlpha, (0.55 + 0.45 * this._buildFrac) * _entOpacity)
+    } else if (this._buildCut != null) {
       this.#u1f(this.uBuildCutOn, 1)
       this.#u1f(this.uBuildCutY, this._buildCut)
       const bc = this._buildFxColor || [0.35, 1.0, 0.6]
@@ -4389,6 +4454,8 @@ export class ModelRenderer {
     this.uBuildCutOn = gl.getUniformLocation(prog, 'uBuildCutOn')
     this.uBuildCutY = gl.getUniformLocation(prog, 'uBuildCutY')
     this.uBuildFxColor = gl.getUniformLocation(prog, 'uBuildFxColor')
+    this.uBuildShimmer = gl.getUniformLocation(prog, 'uBuildShimmer')
+    this.uBuildFrac = gl.getUniformLocation(prog, 'uBuildFrac')
     // Phase 2 lighting LOD — 0 = full (rim + back/fill + Blinn-Phong
     // specular), 1 = cheap (Lambertian + ambient only).  Set by the
     // entity loop per-entity based on the shadow LOD decision.
