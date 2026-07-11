@@ -1208,6 +1208,73 @@ export async function createWorld(canvas, {
     })
   }
 
+  // Retained map-feature placement list so a single reclaimed prop can be
+  // dropped from the baked scenery without a full terrain reload. setTerrain
+  // records the terrain; removeMapFeatureAt masks a cell and re-bakes the field.
+  let _featureTerrain = null
+  const _reclaimedFeatureCells = new Set() // "ax,ay" cells hidden by reclaim
+
+  // installMapFeatures (re)bakes the map's scenery stand-ins (trees, rocks,
+  // decals, 3DO feature models, steam wisps) from the retained placement list,
+  // skipping any cell masked by reclaim. A stale in-flight build is cancelled by
+  // bumping the token. Shared by setTerrain and removeMapFeatureAt.
+  function installMapFeatures() {
+    const token = ++featureBuildToken
+    featureModels.length = 0
+    steamVents.length = 0
+    const terrain = _featureTerrain
+    if (!terrain || !Array.isArray(terrain.features) || !terrain.features.length) {
+      renderer.setMapFeatures(null)
+      return
+    }
+    const placements = _reclaimedFeatureCells.size
+      ? terrain.features.filter((f) => f && !_reclaimedFeatureCells.has(`${f.ax | 0},${f.ay | 0}`))
+      : terrain.features
+    featureDefs().then((defs) => {
+      if (disposed || token !== featureBuildToken) return
+      const field = buildFeatureField({
+        features: placements,
+        defs,
+        heightAt: terrainHeightAt,
+        cellWU: (terrain.cellWU || 16),
+        style: game.featureStyle || null,
+      })
+      renderer.setMapFeatures(field.batches)
+      if (Array.isArray(field.decals) && field.decals.length && assets && typeof assets.featureSprite === 'function') {
+        Promise.all(field.decals.map(async (d) => {
+          try {
+            const raw = await assets.featureSprite(d.sprite || d.feature)
+            if (!raw) return null
+            const image = await toTexImageSource(raw)
+            return { image, data: d.data, count: d.count }
+          } catch {
+            return null
+          }
+        })).then((loaded) => {
+          if (disposed || token !== featureBuildToken) return
+          const ready = loaded.filter(Boolean)
+          if (ready.length) {
+            renderer.setFeatureDecals(ready)
+            if (!renderer.running) world.step(0)
+          }
+        }).catch(() => { /* sprites missing — procedural fallback already baked */ })
+      }
+      for (const em of field.emitters || []) {
+        if (em.kind !== 'steam') continue
+        const rng = mulberry32(em.seed >>> 0)
+        steamVents.push({ x: em.x, y: em.y, z: em.z, r: em.r, rng, accMs: rng() * STEAM_INTERVAL_MS })
+      }
+      field.models.forEach((m, idx) => {
+        const rec = { idx, model: null, x: m.x, y: m.y, z: m.z, heading: m.heading, name: m.name }
+        featureModels.push(rec)
+        loadBaseModel(m.name).then((base) => {
+          if (!disposed && token === featureBuildToken) rec.model = base.cloneForInstance()
+        }).catch(() => { /* unpacked object feature — stays invisible */ })
+      })
+      if (!renderer.running) world.step(0)
+    }).catch(() => { /* no feature catalogue — terrain still installed */ })
+  }
+
   const world = {
     // Escape hatches for hosts that drive the renderer directly (the
     // studio's sandbox view attaches its own gesture handling, entity
@@ -1347,63 +1414,11 @@ export async function createWorld(canvas, {
         const envKey = planetEnvironment(terrain.planet)
         if (envKey) renderer.setEnvironment(envKey)
       }
-      if (terrain && features && Array.isArray(terrain.features) && terrain.features.length) {
-        const token = featureBuildToken
-        featureDefs().then((defs) => {
-          if (disposed || token !== featureBuildToken) return
-          const field = buildFeatureField({
-            features: terrain.features,
-            defs,
-            heightAt: terrainHeightAt,
-            cellWU: (terrain.cellWU || 16),
-            // Per-game feature dialect: 'tak' selects the TA:Kingdoms
-            // builders (palms/cypresses, henge stones, grass tufts, mana
-            // wisps; sound/wave markers skipped).  Absent → the TA table,
-            // byte-identical to before the style existed.
-            style: game.featureStyle || null,
-          })
-          renderer.setMapFeatures(field.batches)
-          // Flat ground features (metal deposits, steam vents, scars…):
-          // paint their REAL packed GAF art onto the terrain as textured
-          // decals.  Load each distinct sprite, then install the decal
-          // batches once the images have decoded (deterministic order).
-          if (Array.isArray(field.decals) && field.decals.length && assets && typeof assets.featureSprite === 'function') {
-            Promise.all(field.decals.map(async (d) => {
-              try {
-                const raw = await assets.featureSprite(d.sprite || d.feature)
-                if (!raw) return null
-                const image = await toTexImageSource(raw)
-                return { image, data: d.data, count: d.count }
-              } catch {
-                return null
-              }
-            })).then((loaded) => {
-              if (disposed || token !== featureBuildToken) return
-              const ready = loaded.filter(Boolean)
-              if (ready.length) {
-                renderer.setFeatureDecals(ready)
-                if (!renderer.running) world.step(0)
-              }
-            }).catch(() => { /* sprites missing — procedural fallback already baked */ })
-          }
-          // Steam vents: the baked decal is static; the wisp is live.
-          // Each vent gets its own deterministic rng + a phase-staggered
-          // accumulator so the map's vents don't puff in lockstep.
-          for (const em of field.emitters || []) {
-            if (em.kind !== 'steam') continue
-            const rng = mulberry32(em.seed >>> 0)
-            steamVents.push({ x: em.x, y: em.y, z: em.z, r: em.r, rng, accMs: rng() * STEAM_INTERVAL_MS })
-          }
-          field.models.forEach((m, idx) => {
-            const rec = { idx, model: null, x: m.x, y: m.y, z: m.z, heading: m.heading, name: m.name }
-            featureModels.push(rec)
-            loadBaseModel(m.name).then((base) => {
-              if (!disposed && token === featureBuildToken) rec.model = base.cloneForInstance()
-            }).catch(() => { /* unpacked object feature — stays invisible */ })
-          })
-          if (!renderer.running) world.step(0)
-        }).catch(() => { /* no feature catalogue — terrain still installed */ })
-      }
+      // Retain the placements and (re)bake the scenery through the shared
+      // installer. A fresh terrain clears any reclaim masks from the last map.
+      _reclaimedFeatureCells.clear()
+      _featureTerrain = (terrain && features) ? terrain : null
+      installMapFeatures()
       // A fresh battlefield starts with no footprint overrides — re-install
       // them for any building already placed so the new terrain flattens under
       // it too (the previous terrain's override map went with the old mesh).
@@ -1417,6 +1432,22 @@ export async function createWorld(canvas, {
       renderer.setFeaturesEnabled(on)
       world._featuresOff = !on
       if (!renderer.running) world.step(0)
+    },
+
+    // removeMapFeatureAt drops the scenery stand-in occupying the cell under
+    // world (x, z) and re-bakes the feature field without it — the reclaim path
+    // calls this when the sim consumes a tree/rock so the baked prop vanishes
+    // together with its sim feature. A no-op (returns false) when the cell holds
+    // no placement or was already reclaimed.
+    removeMapFeatureAt(x, z) {
+      const terrain = _featureTerrain
+      if (!terrain) return false
+      const cw = terrain.cellWU || 16
+      const key = `${Math.floor(x / cw)},${Math.floor(z / cw)}`
+      if (_reclaimedFeatureCells.has(key)) return false
+      _reclaimedFeatureCells.add(key)
+      installMapFeatures()
+      return true
     },
 
     // terrainHeightAt samples the installed battlefield's surface Y at a
