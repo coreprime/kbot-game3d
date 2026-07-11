@@ -294,6 +294,12 @@ export class ModelRenderer {
     // ground shader uses to fall back to its plain look until decode.
     this._terrainTex = null
     this._terrainReady = false
+    // Monotonic token bumped on every #loadTerrainTexture entry.  An async
+    // tileset fetch stamps the token live at call time and re-checks it once
+    // it resolves: a load that lands after the tileset has moved on (or the
+    // renderer was disposed) drops its texture instead of clobbering the
+    // current handle or installing a stale tileset.
+    this._terrainTexGen = 0
     // Tileset name to fetch when the user picks Terrain.  Environment
     // presets swap this to match the visual world (mars → 'desert',
     // arctic → 'arctic', etc.).
@@ -6054,10 +6060,17 @@ export class ModelRenderer {
     // composite) resolves null — keep the procedural fallback ground rather
     // than uploading a missing image. Any load failure degrades the same
     // silent way unit textures/build pictures do; no throw, no console spew.
+    // Stamp this load's generation.  A second entry mid-fetch (e.g.
+    // setEnvironment swaps terrainTileset before this resolves) bumps the
+    // token, so the earlier load below detects it moved on and bails.
+    const gen = ++this._terrainTexGen
     Promise.resolve(provider.groundTile(this.terrainTileset))
       .then((result) => (result ? toTexImageSource(result) : null))
       .then((img) => {
         if (!img) return
+        // The renderer was torn down, or another load superseded this one
+        // while its image decoded — drop it without touching the live slot.
+        if (this._disposed || gen !== this._terrainTexGen) return
         const w = img.naturalWidth || img.width
         const h = img.naturalHeight || img.height
         const tex = gl.createTexture()
@@ -6074,6 +6087,9 @@ export class ModelRenderer {
           gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
         }
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
+        // Delete-before-assign, matching setMapTerrain/clearMapTerrain: never
+        // orphan a prior handle if one slipped in ahead of this assignment.
+        if (this._terrainTex) gl.deleteTexture(this._terrainTex)
         this._terrainTex = tex
         this._terrainReady = true
         this.requestRedraw()
