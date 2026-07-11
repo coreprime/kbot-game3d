@@ -1,0 +1,32 @@
+version: '3'
+
+dotenv: ['.env.local', '.env']
+
+tasks:
+  default:
+    desc: Full quality gate — install, lint, test, build
+    cmds:
+      - task: install
+      - task: lint
+      - task: test
+      - task: build
+
+  install:
+    desc: Install JS dependencies from the lockfile
+    cmds:
+      - npm ci
+
+  lint:
+    desc: Run ESLint (no warnings allowed)
+    cmds:
+      - npm run lint
+
+  test:
+    desc: Run the node test suite
+    cmds:
+      - npm test
+
+  build:
+    desc: Bundle the package into dist/
+    cmds:
+      - npm run build
