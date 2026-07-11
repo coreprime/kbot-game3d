@@ -38,9 +38,16 @@ void main() {
   logDepthFragmentBiased(0.0008);
 #endif
   vec4 tex = texture2D(uSprite, vUV);
-  // Edge alpha: the sprite's own transparency feathers the decal.  Drop
-  // near-transparent fragments so the decal never draws a hard box.
-  if (tex.a < 0.02) discard;
+  // Edge alpha: the sprite's own transparency feathers the decal, but some
+  // authored deposit/scar art fills the whole frame with no transparent
+  // margin — that would end on a hard rectangular seam in the dirt.  Fade
+  // the outermost sliver of the quad to zero so EVERY decal melts into the
+  // ground regardless of how its art was cropped.
+  vec2 edge = min(vUV, 1.0 - vUV);
+  float border = smoothstep(0.0, 0.055, min(edge.x, edge.y));
+  float alphaOut = tex.a * border;
+  // Drop near-transparent fragments so the decal never draws a hard box.
+  if (alphaOut < 0.02) discard;
 
   vec3 n = normalize(vNormal);           // decals face +Y (up)
   float diff = max(0.0, dot(n, normalize(uLightDir)));
@@ -61,5 +68,5 @@ void main() {
 
   float dCam = length(uEyePos - vWorldPos);
   col = mix(col, uHorizonColor, smoothstep(1800.0, 5500.0, dCam) * 0.78 * uMapFog);
-  gl_FragColor = vec4(col * uExposure, tex.a);
+  gl_FragColor = vec4(col * uExposure, alphaOut);
 }

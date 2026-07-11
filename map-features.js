@@ -752,8 +752,12 @@ function buildSpriteDecal(decalSink, rng, { x, z, def, r, heightAt }) {
   // the same way (metal fields, scar scatter).
   const yaw = (rng() - 0.5) * 0.6
   const cs = Math.cos(yaw), sn = Math.sin(yaw)
-  // Subdivision: enough to follow terrain without exploding vertex counts.
-  const seg = Math.max(1, Math.min(6, Math.round(Math.max(w, h) / 24)))
+  // Subdivision: enough interior vertices that the quad drapes over a slope
+  // instead of spanning it as a flat sheet that dives under the hill or
+  // hovers over the dip.  Always at least 2×2 (a single quad tents badly on
+  // any grade), scaling up with footprint so a big plate follows rolling
+  // ground, capped so a decal field never explodes the vertex count.
+  const seg = Math.max(2, Math.min(8, Math.round(Math.max(w, h) / 16)))
   const at = (gx, gz) => {
     // Grid coord in [-hw,hw] × [-hh,hh] before rotation.
     const lx = -hw + (gx / seg) * w

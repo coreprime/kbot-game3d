@@ -441,6 +441,24 @@ test('sprite decals lie flat on and hug the terrain surface', () => {
     `decal span (${(maxY - minY).toFixed(2)}) follows terrain span (${(tMax - tMin).toFixed(2)})`)
 })
 
+test('small sprite decals still subdivide so they drape over slopes', () => {
+  // A compact deposit sprite must not collapse to a single flat quad — a
+  // 2x2 quad tents badly on a grade.  Every interior vertex has to sample
+  // its own terrain height, so the decal drapes instead of spanning.
+  const defs = { ore: { id: 'ore', category: 'metal', footprintX: 2, footprintZ: 2, spriteW: 32, spriteH: 32, sprite: 'featuresprites/ore.png' } }
+  const heightAt = (x, z) => 3 + x * 0.2 + z * 0.1
+  const field = buildFeatureField({ features: [{ name: 'Ore', ax: 8, ay: 8 }], defs, heightAt })
+  assert.equal(field.decals.length, 1)
+  const d = field.decals[0]
+  // At least a 2x2 grid → 4 quads → 24 vertices (a lone quad is 6).
+  assert.ok(d.count >= 24, `small decal is subdivided (${d.count} verts, expected >= 24)`)
+  // And each vertex hugs its own terrain sample.
+  for (let i = 0; i < d.data.length; i += DSTRIDE) {
+    const lift = d.data[i + 1] - heightAt(d.data[i], d.data[i + 2])
+    assert.ok(lift > 0.1 && lift < 1.0, `decal vertex drapes on terrain, lift=${lift}`)
+  }
+})
+
 test('flat features WITHOUT a sprite fall back to procedural flat geometry', () => {
   // A v5 pack (no sprite field) still renders metal/vents as the improved
   // procedural decals — flat, in the stand-in batches, no textured decals.
