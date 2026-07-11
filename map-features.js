@@ -1274,7 +1274,7 @@ export function categoryBuilder(category, nameHint = '') {
   // classic deposit baked into the floor. Metal *structures* (MetalTower is
   // category=building) fall through and keep their built 3D read.
   const catLo = String(category || '').toLowerCase()
-  if (/\bmetal/.test(String(nameHint || '').toLowerCase()) &&
+  if (/metal/.test(String(nameHint || '').toLowerCase()) &&
       (catLo === '' || catLo === 'rocks' || catLo === 'metal')) {
     return buildMetalPatch
   }
@@ -1386,6 +1386,14 @@ export function buildFeatureField({ features, defs = {}, heightAt = null, cellWU
     if (!f || !f.name) { skipped++; continue }
     const key = String(f.name).toLowerCase()
     const def = defs[key] || null
+    // Metal deposits render as the reliable procedural steel plate
+    // (buildMetalPatch), never a sprite decal: the packed metal GAF art does not
+    // always resolve to a live sprite, leaving the deposit invisible, and the
+    // plate is the recognisable "deposit baked into the floor" the sim keys its
+    // extractor sites off. Detect by metal category or a metal-bearing name
+    // (RockMetal*, MarsMetal*, WaterMetal…).
+    const isMetalDeposit =
+      (def && String(def.category || '').toLowerCase() === 'metal') || /metal/i.test(key)
     const x = (f.ax + 0.5) * cellWU
     const z = (f.ay + 0.5) * cellWU
     const y = hAt(x, z)
@@ -1399,7 +1407,7 @@ export function buildFeatureField({ features, defs = {}, heightAt = null, cellWU
     const { r, h } = tak ? takFeatureSizeWU(def, key) : featureSizeWU(def)
     // Flat ground feature WITH packed real sprite art → paint it as a
     // texture-conforming decal instead of faking it with geometry.
-    if (def && def.sprite && isFlatGroundCategory(def.category, key)) {
+    if (def && def.sprite && isFlatGroundCategory(def.category, key) && !isMetalDeposit) {
       let ds = decalSinks.get(def.sprite)
       if (!ds) {
         ds = { sprite: def.sprite, feature: key, sink: new DecalSink() }

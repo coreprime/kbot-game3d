@@ -373,11 +373,11 @@ test('isFlatGroundCategory matches the pack extraction set', () => {
 
 test('flat features WITH a packed sprite become textured decals, not geometry', () => {
   const defs = {
-    ore: { id: 'ore', category: 'metal', footprintX: 3, footprintZ: 3, spriteW: 66, spriteH: 55, sprite: 'featuresprites/ore.png' },
+    scar: { id: 'scar', category: 'scars', footprintX: 3, footprintZ: 3, spriteW: 66, spriteH: 55, sprite: 'featuresprites/scar.png' },
     vent: { id: 'vent', category: 'steamvents', footprintX: 1, footprintZ: 1, spriteW: 99, spriteH: 94, sprite: 'featuresprites/vent.png' },
   }
   const field = buildFeatureField({
-    features: [{ name: 'Ore', ax: 4, ay: 6 }, { name: 'Vent', ax: 9, ay: 9 }],
+    features: [{ name: 'Scar', ax: 4, ay: 6 }, { name: 'Vent', ax: 9, ay: 9 }],
     defs, heightAt: () => 7,
   })
   // No procedural stand-in geometry: both flat features went to decals.
@@ -395,11 +395,11 @@ test('flat features WITH a packed sprite become textured decals, not geometry', 
 })
 
 test('sprite decals lie flat on and hug the terrain surface', () => {
-  const defs = { ore: { id: 'ore', category: 'metal', footprintX: 3, footprintZ: 3, spriteW: 66, spriteH: 55, sprite: 'featuresprites/ore.png' } }
+  const defs = { scar: { id: 'scar', category: 'scars', footprintX: 3, footprintZ: 3, spriteW: 66, spriteH: 55, sprite: 'featuresprites/scar.png' } }
   // Sloped terrain: every decal vertex must float just above its own
   // terrain sample (the conforming grid drapes over the slope).
   const heightAt = (x, z) => 3 + x * 0.12 + z * 0.06
-  const field = buildFeatureField({ features: [{ name: 'Ore', ax: 8, ay: 8 }], defs, heightAt })
+  const field = buildFeatureField({ features: [{ name: 'Scar', ax: 8, ay: 8 }], defs, heightAt })
   assert.ok(field.decals.length === 1)
   for (const d of field.decals) {
     for (let i = 0; i < d.data.length; i += DSTRIDE) {
@@ -432,9 +432,27 @@ test('flat features WITHOUT a sprite fall back to procedural flat geometry', () 
   assert.ok(field.batches.reduce((s, b) => s + b.count, 0) > 0, 'procedural fallback geometry present')
 })
 
+test('metal deposits ALWAYS render the procedural plate, even with a packed sprite', () => {
+  // The packed metal GAF art does not reliably resolve to a live sprite, which
+  // left the deposit invisible on maps like Spider Ambush (MarsMetal01). Metal
+  // deposits must key off the recognisable procedural steel plate — by metal
+  // category OR a metal-bearing name (RockMetal*, MarsMetal*, WaterMetal…) — so
+  // an extractor site always reads as metal baked into the floor.
+  const defs = {
+    marsmetal01: { id: 'marsmetal01', category: 'metal', footprintX: 3, footprintZ: 3, spriteW: 66, spriteH: 55, sprite: 'featuresprites/marsmetal.png' },
+    rockmetal1: { id: 'rockmetal1', category: 'rocks', footprintX: 3, footprintZ: 3, spriteW: 40, spriteH: 40, sprite: 'featuresprites/rockmetal.png' },
+  }
+  const field = buildFeatureField({
+    features: [{ name: 'MarsMetal01', ax: 4, ay: 6 }, { name: 'RockMetal1', ax: 10, ay: 6 }],
+    defs, heightAt: () => 7,
+  })
+  assert.equal((field.decals || []).length, 0, 'metal never takes the sprite-decal path')
+  assert.ok(field.batches.reduce((s, b) => s + b.count, 0) > 0, 'both metal deposits emit the procedural plate')
+})
+
 test('decal batches are deterministic across runs', () => {
-  const defs = { ore: { id: 'ore', category: 'metal', footprintX: 3, footprintZ: 3, spriteW: 66, spriteH: 55, sprite: 'featuresprites/ore.png' } }
-  const feats = [{ name: 'Ore', ax: 4, ay: 6 }, { name: 'Ore', ax: 12, ay: 3 }]
+  const defs = { scar: { id: 'scar', category: 'scars', footprintX: 3, footprintZ: 3, spriteW: 66, spriteH: 55, sprite: 'featuresprites/scar.png' } }
+  const feats = [{ name: 'Scar', ax: 4, ay: 6 }, { name: 'Scar', ax: 12, ay: 3 }]
   const a = buildFeatureField({ features: feats, defs, heightAt: () => 5 })
   const b = buildFeatureField({ features: feats, defs, heightAt: () => 5 })
   assert.equal(a.decals.length, b.decals.length)
