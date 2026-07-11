@@ -721,6 +721,14 @@ export function isFlatGroundCategory(category, nameHint = '') {
   const c = String(category || '').toLowerCase()
   if (FLAT_GROUND_CATEGORIES.has(c)) return true
   const n = String(nameHint || '').toLowerCase()
+  // TA:Kingdoms sacred sites (the mana stones a lodestone producer is founded
+  // over) lie flush on the ground and are named <house>mana<NN> (aramana01,
+  // cremana01…); their real GAF art paints as a flat decal exactly like a TA
+  // metal deposit.  The upright standing-stones share category=mana but are
+  // named <house>henge<NN>, so the mana<digit> pattern promotes only the
+  // ground sites — and the decal path additionally gates on a packed sprite,
+  // which the pack stamps only for the sacred sites, so a henge never decals.
+  if (/mana\d/.test(n)) return true
   return /steamvent|geyser|fumarole|vent|scar|smudge|track|crater|\bhole|metal|aquaore/.test(c + ' ' + n)
 }
 
@@ -1398,7 +1406,7 @@ export function buildFeatureField({ features, defs = {}, heightAt = null, cellWU
     const { r, h } = tak ? takFeatureSizeWU(def, key) : featureSizeWU(def)
     // Flat ground feature WITH packed real sprite art → paint it as a
     // texture-conforming decal instead of faking it with geometry.
-    if (def && def.sprite && isFlatGroundCategory(def.category, key)) {
+    if (def && def.sprite && (def.sacredSite > 0 || isFlatGroundCategory(def.category, key))) {
       let ds = decalSinks.get(def.sprite)
       if (!ds) {
         ds = { sprite: def.sprite, feature: key, sink: new DecalSink() }

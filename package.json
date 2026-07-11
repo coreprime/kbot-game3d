@@ -1,6 +1,6 @@
 {
   "name": "@coreprime/kbot-game3d",
-  "version": "0.2.6",
+  "version": "0.2.7",
   "description": "Self-contained WebGL renderer for Total Annihilation-style scenes: 3DO models, GAF textures, COB-posed pieces, terrain/sky/water and weapon effects, fed through an injected AssetProvider.",
   "license": "MIT",
   "type": "module",

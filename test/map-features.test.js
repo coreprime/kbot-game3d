@@ -389,6 +389,23 @@ test('loosely-tagged metal deposits (category "rocks", metal/ore name) route to 
   assert.ok(field.decals[0].count > 0 && field.decals[0].sprite.startsWith('featuresprites/'))
 })
 
+test('TA:K sacred sites (category mana, mana<NN> id) route to the flat-decal path', () => {
+  // Sacred stones lie flush on the ground and paint their real GAF art as a
+  // decal — like a metal deposit. The upright henge standing-stones share
+  // category=mana but keep their <house>henge<NN> names and stay 3D.
+  assert.ok(isFlatGroundCategory('mana', 'aramana01'), 'a sacred stone is flat ground')
+  assert.ok(isFlatGroundCategory('mana', 'cremana03'), 'a Creon sacred stone is flat ground')
+  assert.ok(!isFlatGroundCategory('mana', 'arahenge01'), 'a henge standing-stone stays upright')
+  // A sacred-site def carrying its packed sprite becomes a textured decal.
+  const defs = {
+    aramana02: { id: 'aramana02', category: 'mana', footprintX: 2, footprintZ: 2, sacredSite: 1.5, spriteW: 40, spriteH: 40, sprite: 'featuresprites/aramana02.png' },
+  }
+  const field = buildFeatureField({ features: [{ name: 'AraMana02', ax: 5, ay: 5 }], defs, heightAt: () => 4, style: 'tak' })
+  assert.equal(field.batches.reduce((s, b) => s + b.count, 0), 0, 'no procedural mana geometry')
+  assert.equal(field.decals.length, 1, 'the sacred site becomes one textured decal')
+  assert.ok(field.decals[0].count > 0 && field.decals[0].sprite.startsWith('featuresprites/'))
+})
+
 test('flat features WITH a packed sprite become textured decals, not geometry', () => {
   const defs = {
     ore: { id: 'ore', category: 'metal', footprintX: 3, footprintZ: 3, spriteW: 66, spriteH: 55, sprite: 'featuresprites/ore.png' },
