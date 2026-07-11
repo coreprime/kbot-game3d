@@ -217,6 +217,12 @@ export class ParticlePool {
     // standard SFX kinds (smoke / sparks float freely); positive for
     // ballistic projectiles so shells arc visibly.
     this.gravity = new Float32Array(capacity)
+    // Growth per particle — world units of diameter added to `size` each
+    // second.  Zero for crisp SFX (sparks, projectiles); positive for
+    // billowing volumes (steam plumes, exhaust) so a puff visibly swells
+    // and softens as it rises, the way real vapour entrains air and
+    // spreads instead of drifting up as a rigid dot.
+    this.grow = new Float32Array(capacity)
     // noFade flag — 0 = particle alpha fades linearly to zero over
     // its life (standard SFX behaviour), 1 = stays at spawn alpha
     // until life expires (projectiles want a crisp visible bullet
@@ -296,6 +302,10 @@ export class ParticlePool {
     // gravity:  applied to vy each tick; default 0.  Ballistic
     // projectiles pass the active world gravity here so shells arc.
     this.gravity[slot] = +opts.gravity || 0
+    // grow:  diameter added to `size` per second (default 0).  Steam /
+    // exhaust plumes pass a positive value so the puff billows outward as
+    // it climbs.
+    this.grow[slot] = +opts.grow || 0
     // noFade:  projectiles want full alpha until impact; smoke etc.
     // want the linear fade-to-zero so the puff dissipates.
     this.noFade[slot] = opts.noFade ? 1 : 0
@@ -344,6 +354,9 @@ export class ParticlePool {
       // arc down toward the ground.  Subtracted because positive Y
       // is up in world space.
       if (this.gravity[i]) this.vy[i] -= this.gravity[i] * dt
+      // Billow: swell the sprite over the particle's life so a rising
+      // steam puff spreads into a soft column instead of a hard dot.
+      if (this.grow[i]) this.size[i] += this.grow[i] * dt
       // Linear fade based on remaining life.  Visually a bit harsh
       // but cheap; could swap to ease-out (square the ratio) if it
       // ever reads as too abrupt.  noFade particles (projectiles)
@@ -369,7 +382,7 @@ export class ParticlePool {
       // Grow once - particle counts plateau quickly.  Doubling
       // matches the standard amortised-O(1) growth pattern.
       const nc = this.capacity * 2
-      for (const name of ['x','y','z','vx','vy','vz','r','g','b','a','a0','size','life','life0','gravity','lightStrength','age']) {
+      for (const name of ['x','y','z','vx','vy','vz','r','g','b','a','a0','size','life','life0','gravity','grow','lightStrength','age']) {
         const next = new Float32Array(nc)
         next.set(this[name])
         this[name] = next
@@ -401,6 +414,7 @@ export class ParticlePool {
     this.size[to] = this.size[from]
     this.life[to] = this.life[from]; this.life0[to] = this.life0[from]
     this.gravity[to] = this.gravity[from]
+    this.grow[to] = this.grow[from]
     this.noFade[to] = this.noFade[from]
     this.lightStrength[to] = this.lightStrength[from]
     this.kind[to] = this.kind[from]

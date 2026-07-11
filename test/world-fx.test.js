@@ -421,3 +421,37 @@ test('pre-v8 defs (no effectClass) keep the legacy pipeline untouched', () => {
   const c = projectileColor(plain, SFX_PROJECTILE_BULLET, palette)
   assert.ok(c[0] >= 1.0, `legacy bullet tint must stay bright, got ${c}`)
 })
+
+// ── Billowing particles (steam-vent plumes) ──────────────────────────────
+
+test('grow swells a particle over its life and survives compaction', () => {
+  const pool = new ParticlePool(8)
+  // A crisp puff (no growth) and a billowing one from the same spot.
+  pool.emit(2 /* SFX_SMOKE_WHITE */, [0, 0, 0], { size: 4, grow: 0, lifeMs: 3000, velocity: [0, 10, 0] })
+  pool.emit(2, [0, 0, 0], { size: 4, grow: 8, lifeMs: 3000, velocity: [0, 10, 0] })
+  const crispBefore = pool.size[0]
+  pool.tick(500)
+  // The growth puff has swollen; the crisp one has not.
+  assert.equal(pool.size[0], crispBefore, 'grow:0 keeps a fixed size')
+  assert.ok(pool.size[1] > 4 + 3, `grow puff swelled (${pool.size[1]} wu)`)
+  // Kill the first puff and tick again — the survivor must keep growing at
+  // its own rate after the dead slot is compacted out.
+  pool.life[0] = 0
+  const swollen = pool.size[1]
+  pool.tick(500)
+  assert.equal(pool.count, 1, 'dead puff compacted away')
+  assert.ok(pool.size[0] > swollen, 'survivor keeps billowing after compaction')
+})
+
+test('grow is deterministic and defaults to zero', () => {
+  const a = new ParticlePool(4)
+  const b = new ParticlePool(4)
+  a.emit(2, [0, 0, 0], { size: 3, grow: 6, lifeMs: 800 })
+  b.emit(2, [0, 0, 0], { size: 3, grow: 6, lifeMs: 800 })
+  a.tick(400); b.tick(400)
+  assert.equal(a.size[0], b.size[0])
+  // A plain spark carries no growth.
+  const p = new ParticlePool(4)
+  p.emit(3 /* SFX_SPARK */, [0, 0, 0], {})
+  assert.equal(p.grow[0], 0, 'non-billow kinds default grow to 0')
+})

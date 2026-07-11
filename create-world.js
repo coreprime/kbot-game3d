@@ -158,13 +158,19 @@ const BUILD_SPIN_RAD_S = 0.6
 const SHIMMER_MOTE_INTERVAL_MS = 110
 const SHIMMER_SPARK_INTERVAL_MS = 140
 
-// Steam-vent wisp cadence + drift.  A lazy geothermal plume: one soft
-// white puff every third of a second rising off the vent throat, phase-
-// staggered per vent.  Velocities come from each vent's own seeded rng
-// so the plume is deterministic under a driven fx clock.
-const STEAM_INTERVAL_MS = 340
-const STEAM_RISE_WU_S = 16
-const STEAM_LIFE_MS = 1700
+// Steam-vent wisp cadence + drift.  A geothermal plume: a steady stream
+// of soft white puffs rising off the vent throat, each one billowing wider
+// and thinning as it climbs so the column reads as continuous vapour rather
+// than a single lazy puff.  Emission is dense (a fresh puff several times a
+// second) and phase-staggered per vent; every puff's size, life, tint and
+// velocity come from that vent's own seeded rng so the plume is fully
+// deterministic under a driven fx clock.
+const STEAM_INTERVAL_MS = 150
+const STEAM_RISE_WU_S = 15
+const STEAM_LIFE_MS = 2300
+// Diameter (wu) each puff swells per second as it entrains air on the way
+// up — the billow that turns a stack of dots into a soft column.
+const STEAM_GROW_WU_S = 7.5
 
 // Reclaimed wrecks shrink toward this scale while a reclaim beam holds
 // them (full shrink over RECLAIM_SHRINK_MS of beam time).
@@ -646,16 +652,24 @@ export async function createWorld(canvas, {
         v.accMs += dtMs
         while (v.accMs >= STEAM_INTERVAL_MS) {
           v.accMs -= STEAM_INTERVAL_MS
-          const jx = (v.rng() * 2 - 1) * v.r * 0.2
-          const jz = (v.rng() * 2 - 1) * v.r * 0.2
+          // Puffs are born tight at the throat (a small dense core) and
+          // billow + fade as they rise.  A little horizontal jitter at the
+          // mouth plus a slow lateral drift keeps the column from reading as
+          // a rigid pipe; the odd fatter, slower puff lends the plume body.
+          const jx = (v.rng() * 2 - 1) * v.r * 0.22
+          const jz = (v.rng() * 2 - 1) * v.r * 0.22
+          const fat = v.rng() < 0.35
           worldBinding.particles.emit(SFX_SMOKE_WHITE, [v.x + jx, v.y, v.z + jz], {
-            size: 3.5 + v.r * 0.12,
-            lifeMs: STEAM_LIFE_MS + v.rng() * 400,
-            color: [0.92, 0.95, 0.98, 0.30],
+            size: (2.4 + v.r * 0.09) * (fat ? 1.5 : 0.85 + v.rng() * 0.4),
+            lifeMs: STEAM_LIFE_MS + v.rng() * 500,
+            // Cool blue-white; slightly hotter/denser near the throat, the
+            // fatter boil-puffs a touch more opaque.
+            color: [0.90, 0.94, 0.99, (fat ? 0.34 : 0.24) + v.rng() * 0.08],
+            grow: STEAM_GROW_WU_S * (fat ? 1.3 : 0.8 + v.rng() * 0.5),
             velocity: [
-              (v.rng() * 2 - 1) * 2.5,
-              STEAM_RISE_WU_S * (0.8 + v.rng() * 0.4),
-              (v.rng() * 2 - 1) * 2.5,
+              (v.rng() * 2 - 1) * 2.2,
+              STEAM_RISE_WU_S * (fat ? 0.7 : 0.85 + v.rng() * 0.5),
+              (v.rng() * 2 - 1) * 2.2,
             ],
           })
         }
