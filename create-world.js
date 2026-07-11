@@ -1981,7 +1981,17 @@ export async function createWorld(canvas, {
         }
       }
       let def = null
-      if (weapon) {
+      if (weapon && typeof weapon === 'object') {
+        // A caller that already holds the resolved weapon meta (the studio
+        // sandbox forwards the sim's per-unit weapon record) passes it straight
+        // through. Normalizing it to the same def shape the pack catalogue
+        // yields lets a ballistic / particle / bitmap shot render as its real
+        // projectile — without a catalogue the string-lookup below misses and
+        // every shot degrades to the beam fallback (the laser-instead-of-shell
+        // bug). The meta already uses the def field names, so classification is
+        // identical to the pack path.
+        def = normalizePackWeaponDef(weapon.name || weapon.weaponId, weapon)
+      } else if (weapon) {
         const defs = await weaponDefs()
         def = defs[String(weapon).toLowerCase()] || null
       }

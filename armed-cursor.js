@@ -138,9 +138,9 @@ export class ArmedCursor {
   // so setSlot / setArmed / setAmbient share the validation.
   #normalizeSlot(slot) {
     if (slot === 'move' || slot === 'attack' || slot === 'patrol' ||
-        slot === 'repair' || slot === 'load' || slot === 'unload' ||
-        slot === 'primary' || slot === 'secondary' || slot === 'tertiary' ||
-        slot === 'select' || slot === 'normal') return slot
+        slot === 'repair' || slot === 'reclaim' || slot === 'load' ||
+        slot === 'unload' || slot === 'primary' || slot === 'secondary' ||
+        slot === 'tertiary' || slot === 'select' || slot === 'normal') return slot
     return null
   }
 
@@ -209,6 +209,10 @@ export class ArmedCursor {
       // Builder hovering an under-construction frame — clicking resumes
       // the build (both games ship a repair glyph).
       case 'repair': srcName = 'cursorrepair'; break
+      // Construction unit over a reclaimable (tree / rock / wreck / building) —
+      // clicking dismantles it for resources. TA's cursors.gaf names the glyph
+      // 'cursorreclamate'; a provider without it keeps the native pointer.
+      case 'reclaim': srcName = 'cursorreclamate'; break
       case 'normal': srcName = 'cursornormal'; break
       // primary / secondary / tertiary / attack share the attack glyph by
       // default — but a `dropped` weapon (TDF dropped=1) is a bomb run, so
