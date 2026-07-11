@@ -303,6 +303,10 @@ export interface SnapshotUnit {
    * TA footprint cells (FootprintX/FootprintZ). Only applied to structures.
    */
   footprint?: FootprintSpec | null
+  /** Interactive editor: mark this unit in the selected set (selection ring). */
+  selected?: boolean
+  /** Interactive editor: hover/inspector outline this unit for the frame. */
+  highlight?: boolean
   /** dead:true on a live unit triggers unitDeath(id, { severity: deathSeverity, corpse, heapCorpse, impactDir, impactMag }) once. */
   dead?: boolean
   deathSeverity?: number
@@ -490,6 +494,18 @@ export interface World {
   }): void
   /** Capture-complete flash: a brief bright shell pulse + spark shower. */
   captureFlash(id: number | string): boolean
+  /**
+   * Replace the translucent skeleton overlay drawn over the live world — the
+   * interactive editor's placement preview + queued-build plan. Entries are
+   * pure presentation (never sim units): { model, transform, ghostInvalid? }.
+   * Empty/omitted clears it.
+   */
+  setGhosts(list?: Array<{
+    id?: number | string
+    model: Model
+    transform: { x: number; y: number; z: number; headingRad?: number }
+    ghostInvalid?: boolean
+  }>): void
   /** Surface Y at a world XZ (0 on the flat pad) — what `grounded` clamps to. */
   terrainHeightAt(x: number, z: number): number
   /** Smoothed surface normal at a world XZ. */

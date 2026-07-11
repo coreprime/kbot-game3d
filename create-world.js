@@ -293,6 +293,7 @@ export async function createWorld(canvas, {
   let projectiles = []           // transient snapshot-provided shots
   let tracers = []               // fireWeapon() visual tracers
   let weaponFx = []              // legacy explicit beam/tracer line effects
+  let ghosts = []                // setGhosts() translucent placement/plan skeletons
   let weaponDefsCache = null     // id → normalised pack weapon def
   let featureDefsCache = null    // id → pack feature def (features.json)
   let featureBuildToken = 0      // cancels stale async feature builds
@@ -496,7 +497,8 @@ export async function createWorld(canvas, {
         ent.meta = { isAircraft: !!u.air, isHovercraft: !!u.hover, bankScale: 1, pitchScale: 1 }
       }
       // Capture flash: a bright wireframe shell pulse for the flash window.
-      if (u._captureMs > 0) ent.highlight = true
+      // The editor's per-frame hover highlight rides the same channel.
+      if (u._captureMs > 0 || u.extHighlight) ent.highlight = true
       entities.push(ent)
       // Status overlay only while the unit is damaged: the health bar is
       // the gate, and the veteran-rank stars ride beneath it — a
@@ -560,6 +562,21 @@ export async function createWorld(canvas, {
         model: pr.model,
         transform: { x: pr.x, y: pr.y, z: pr.z, headingRad: pr.headingRad || 0, pitchRad: pr.pitchRad || 0 },
         isProjectile: true,
+      })
+    }
+    // Translucent skeletons the editor overlays on the live world: a
+    // placement preview riding the cursor, or a builder's queued-build plan.
+    // Drawn last so they read over the solid units; the renderer emits a
+    // wireframe (green when clear, red when invalid) for any entity flagged
+    // ghost. Passive callers leave the list empty.
+    for (const g of ghosts) {
+      if (!g || !g.model) continue
+      entities.push({
+        id: g.id != null ? g.id : 'ghost',
+        model: g.model,
+        transform: g.transform,
+        ghost: true,
+        ghostInvalid: !!g.ghostInvalid,
       })
     }
     renderer.setEntities(entities)
@@ -1565,6 +1582,12 @@ export async function createWorld(canvas, {
         if (su.tilt != null) u.tilt = !!su.tilt
         if (su.hp01 != null) u.hp01 = su.hp01
         if (su.rank != null) u.rank = su.rank | 0
+        // Interactive selection/highlight channels (the editor path): an
+        // editor marks the selected set + a hovered unit per frame so the
+        // renderer draws the selection ring / hover outline. Passive callers
+        // (replay) simply never set them, so the unit stays unmarked.
+        if (su.selected != null) u.selected = !!su.selected
+        if (su.highlight != null) u.extHighlight = !!su.highlight
         if (su.buildPercent != null) u.buildPercent = su.buildPercent
         // footprint: { x, z } in TA footprint cells — a building flattens the
         // terrain under it. Sync after position/mobile/grounded are updated so
@@ -1786,6 +1809,17 @@ export async function createWorld(canvas, {
       units.delete(id)
       if (redraw && !renderer.running) world.step(0)
       return true
+    },
+
+    // setGhosts replaces the translucent skeleton overlay drawn over the live
+    // world — the interactive editor's placement preview + queued-build plan.
+    // Each entry is { model, transform:{ x, y, z, headingRad }, ghostInvalid? };
+    // the renderer draws a wireframe (green, or red when ghostInvalid). Pass an
+    // empty array (or omit) to clear. These are pure presentation overlays: they
+    // are NOT world units and never enter applyState / the sim.
+    setGhosts(list) {
+      ghosts = Array.isArray(list) ? list : []
+      if (!renderer.running) world.step(0)
     },
 
     // removeCorpse drops one persistent wreck (e.g. when a recording shows
@@ -2094,6 +2128,7 @@ export async function createWorld(canvas, {
       projectiles = []
       tracers = []
       weaponFx = []
+      ghosts = []
       smokeTrails.clear()
       worldBinding.explosions.clear()
       renderer.dispose()
