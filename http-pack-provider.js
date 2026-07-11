@@ -156,8 +156,18 @@ export class HttpPackProvider {
     return buf && buf.byteLength > 0 ? new Uint8Array(buf) : null
   }
 
-  groundTile(tileset) {
-    return loadImage(this.url(`groundtiles/${packStem(tileset)}.png`))
+  // groundTile resolves the flat background pad's tileset image, or null on a
+  // miss — the same soft fallback texture()/unitPic() give a 3DO texture or
+  // build picture. A pack that ships no groundtiles/ at all (e.g. a TA:K map
+  // pack, whose battlefield surface is the map's own tile composite, not a
+  // repeating pad) then simply keeps the procedural fallback ground instead of
+  // rejecting and wedging the caller's terrain-texture load.
+  async groundTile(tileset) {
+    try {
+      return await loadImage(this.url(`groundtiles/${packStem(tileset)}.png`))
+    } catch {
+      return null
+    }
   }
 
   soundUrl(stem) {

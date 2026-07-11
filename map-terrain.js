@@ -69,10 +69,18 @@ export async function loadMapTerrain(provider, name) {
   }
 
   // Full ground texture: blit each placed tile out of the pool atlas.
+  // willReadFrequently pins a CPU-backed 2D context: a big battlefield is a
+  // multi-thousand-pixel canvas and every tile blit is a plain memcpy, so the
+  // accelerated backing only forces the composite through the GPU emulation
+  // path — pathologically slow on a software rasteriser (a large map's
+  // composite stalled for minutes before the first frame). The canvas is then
+  // read back anyway (uploaded as the terrain texture, sampled for the water
+  // tint, sliced for the near-detail clipmap), so CPU backing is the honest
+  // choice as well as the fast one.
   const canvas = document.createElement('canvas')
   canvas.width = data.tileW * TILE_PX
   canvas.height = data.tileH * TILE_PX
-  const cx = canvas.getContext('2d')
+  const cx = canvas.getContext('2d', { willReadFrequently: true })
   if (pool) {
     const tiles = data.tiles || []
     for (let ty = 0; ty < data.tileH; ty++) {

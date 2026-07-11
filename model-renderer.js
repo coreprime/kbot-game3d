@@ -6049,9 +6049,15 @@ export class ModelRenderer {
     const gl = this.gl
     const provider = getAssetProvider()
     if (!provider || typeof provider.groundTile !== 'function') return
+    // A provider that ships no tileset for this ground (a pack with no
+    // groundtiles/, e.g. a TA:K map pack whose surface is the map's own tile
+    // composite) resolves null — keep the procedural fallback ground rather
+    // than uploading a missing image. Any load failure degrades the same
+    // silent way unit textures/build pictures do; no throw, no console spew.
     Promise.resolve(provider.groundTile(this.terrainTileset))
-      .then((result) => toTexImageSource(result))
+      .then((result) => (result ? toTexImageSource(result) : null))
       .then((img) => {
+        if (!img) return
         const w = img.naturalWidth || img.width
         const h = img.naturalHeight || img.height
         const tex = gl.createTexture()
@@ -6072,9 +6078,7 @@ export class ModelRenderer {
         this._terrainReady = true
         this.requestRedraw()
       })
-      .catch(() => {
-        console.warn(`terrain texture failed to load for tileset ${this.terrainTileset}`)
-      })
+      .catch(() => { /* tileset missing/unreadable — procedural ground stays */ })
   }
 
   #initShadowFBO() {
