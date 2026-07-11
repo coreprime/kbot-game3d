@@ -728,6 +728,24 @@ export class ExplosionOverlay {
   [key: string]: unknown
 }
 
+/**
+ * Flying-polygon death debris — a render primitive a direct-render host
+ * (sandbox / lobby) drives itself against its own GL context. createWorld
+ * spawns the same shard look internally on unitDeath; this is the standalone
+ * form for hosts that render the scene directly rather than via applyState.
+ */
+export class DebrisField {
+  constructor(opts: { gl: WebGLRenderingContext | WebGL2RenderingContext; heightAt?: (x: number, z: number) => number })
+  spawn(
+    model: object,
+    pose: { x: number; y: number; z: number; headingRad?: number },
+    opts?: { severity?: number; impactDir?: number[] | null; impactMag?: number; velocity?: number[] | null }
+  ): void
+  step(dtMs: number): void
+  entities(): Array<{ model: object; transform: object; opacity: number; buildFadeOnly: boolean }>
+  clear(): void
+}
+
 export function attachUnitHotkeys(opts: object): () => void
 
 // Weapon / projectile visuals

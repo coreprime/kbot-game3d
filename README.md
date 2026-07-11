@@ -12,6 +12,19 @@ VM) belongs to a driver such as [`@coreprime/kbot-engine`](https://www.npmjs.com
 whose per-tick snapshots map straight onto `applyState()`. All asset I/O goes
 through one injected **AssetProvider** — the renderer itself never fetches.
 
+### Layering boundary
+
+**Render primitives live here; driver/orchestration lives in the app.** Every
+GPU-facing primitive — geometry upload, particle pools, explosion/debris shard
+meshes (`ExplosionManager`, `DebrisField`, `SmokeTrailManager`, `ParticlePool`),
+projectile/beam visuals, shaders and the model/terrain renderer — is owned by
+game3d and exported for reuse. Apps (the replayer, the studio sandbox) stay
+thin drivers: they compute *what* to show and feed it in through the high-level
+`createWorld()` → `world.applyState()` / `unitDeath()` / `weaponEffect()` /
+`latheBeam()` driver (or, for a host that renders the scene itself, the
+exported primitives). A new FX or mesh capability belongs in game3d, never in a
+consuming app.
+
 ## Install
 
 This package is published publicly on npmjs.org, so no registry or auth
