@@ -97,6 +97,10 @@ export {
   COALESCE_BUCKET_WU,
   BUDGET_FREE_COUNT,
 } from './explosion-fx.js'
+// Flying-polygon death debris — a render primitive a direct-render host
+// (sandbox / lobby) drives itself; the high-level world driver spawns the
+// same look internally on unitDeath.
+export { DebrisField } from './debris-field.js'
 
 // Team + texture configuration
 export { TEAM_SIDES, TA_TEAM_SIDES, TAK_TEAM_SIDES, setTeamSides, teamColorForSide, teamPageForSide, displayRgbForSide, sideForKey } from './team-colors.js'

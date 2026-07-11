@@ -1,0 +1,27 @@
+version: '3'
+
+tasks:
+  default:
+    desc: Lint, build the dist/ tree, and run the unit tests (the CI gate)
+    cmds:
+      - task: check
+
+  check:
+    desc: Full gate — eslint (0 warnings) + dist build + node --test
+    cmds:
+      - npm run check
+
+  lint:
+    desc: ESLint the renderer sources (0 warnings)
+    cmds:
+      - npm run lint
+
+  build:
+    desc: Build the publishable dist/ tree (esbuild per-module + generated assets)
+    cmds:
+      - npm run build
+
+  test:
+    desc: Run the renderer unit tests
+    cmds:
+      - npm run test
