@@ -6,7 +6,7 @@ export default [
   {
     // Generated / build output — third-party or generated artifacts that
     // fail any rule looking at code shape.
-    ignores: ['dist/**', 'generated/**', 'pack-verify/**'],
+    ignores: ['dist/**', 'generated/**', 'pack-verify/**', 'examples/**'],
   },
   js.configs.recommended,
   {

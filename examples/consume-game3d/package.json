@@ -1,0 +1,17 @@
+{
+  "name": "consume-game3d-example",
+  "private": true,
+  "description": "Bundles the published @coreprime/kbot-game3d package and drives createWorld headless in a real browser — a consumer smoke-test of the renderer artifact.",
+  "type": "module",
+  "version": "0.0.0",
+  "scripts": {
+    "test": "node test.mjs"
+  },
+  "dependencies": {
+    "@coreprime/kbot-game3d": "^0.2.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0",
+    "playwright": "^1.40.0"
+  }
+}

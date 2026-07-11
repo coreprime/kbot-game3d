@@ -1,0 +1,17 @@
+{
+  "name": "consume-pack-example",
+  "private": true,
+  "description": "Proves a static `kbot pack` extraction drives the published @coreprime/kbot-game3d HttpPackProvider end-to-end in a real browser, with no studio server.",
+  "type": "module",
+  "version": "0.0.0",
+  "scripts": {
+    "test": "node test.mjs"
+  },
+  "dependencies": {
+    "@coreprime/kbot-game3d": "^0.2.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0",
+    "playwright": "^1.40.0"
+  }
+}
