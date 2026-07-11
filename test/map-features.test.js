@@ -371,6 +371,24 @@ test('isFlatGroundCategory matches the pack extraction set', () => {
   }
 })
 
+test('loosely-tagged metal deposits (category "rocks", metal/ore name) route to the flat-decal path', () => {
+  // Green-planet deposits are authored as category "rocks" though they are
+  // metal sites; a metal/ore name promotes them so their real art still paints
+  // onto the ground.  Bare "rocks" (no deposit name) must stay upright.
+  assert.ok(isFlatGroundCategory('rocks', 'rockmetal'), 'rockmetal is a flat deposit')
+  assert.ok(isFlatGroundCategory('rocks', 'greenaquaore1'), 'greenaquaore is a flat deposit')
+  assert.ok(!isFlatGroundCategory('rocks', 'rock4a'), 'an ordinary rock stays upright')
+  // A deposit def carrying its packed sprite becomes a textured decal, never a
+  // grey rock stand-in.
+  const defs = {
+    rockmetal: { id: 'rockmetal', category: 'rocks', footprintX: 3, footprintZ: 3, spriteW: 57, spriteH: 65, sprite: 'featuresprites/rockmetal.png' },
+  }
+  const field = buildFeatureField({ features: [{ name: 'RockMetal', ax: 5, ay: 5 }], defs, heightAt: () => 4 })
+  assert.equal(field.batches.reduce((s, b) => s + b.count, 0), 0, 'no procedural rock geometry')
+  assert.equal(field.decals.length, 1, 'the deposit becomes one textured decal')
+  assert.ok(field.decals[0].count > 0 && field.decals[0].sprite.startsWith('featuresprites/'))
+})
+
 test('flat features WITH a packed sprite become textured decals, not geometry', () => {
   const defs = {
     ore: { id: 'ore', category: 'metal', footprintX: 3, footprintZ: 3, spriteW: 66, spriteH: 55, sprite: 'featuresprites/ore.png' },

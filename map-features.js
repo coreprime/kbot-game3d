@@ -709,13 +709,19 @@ const FLAT_GROUND_CATEGORIES = new Set([
 ])
 
 // isFlatGroundCategory reports whether a category is drawn as a flat ground
-// decal (matches the pack extraction set, plus the vent/scar name-hint
-// families so pre-catalogue packs still route sensibly).
+// decal (matches the pack extraction set, plus the vent/scar/metal name-hint
+// families so pre-catalogue packs and loosely-tagged deposits still route
+// sensibly).  Metal deposits are the key name-hint case: some worlds file
+// their resource sites under a generic category ("rocks" for the green-planet
+// rockmetal* / greenaquaore* deposits), so a metal/ore name embedded in the
+// id promotes them to the flat-decal path — but only ever when the def
+// actually carries a packed sprite (buildFeatureField gates on def.sprite),
+// so an ordinary rock never turns into a decal.
 export function isFlatGroundCategory(category, nameHint = '') {
   const c = String(category || '').toLowerCase()
   if (FLAT_GROUND_CATEGORIES.has(c)) return true
   const n = String(nameHint || '').toLowerCase()
-  return /steamvent|geyser|fumarole|vent|scar|smudge|track|crater|\bhole|\bmetal/.test(c + ' ' + n)
+  return /steamvent|geyser|fumarole|vent|scar|smudge|track|crater|\bhole|metal|aquaore/.test(c + ' ' + n)
 }
 
 // spriteDecalSize derives the decal's world footprint + terrain-hugging
