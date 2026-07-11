@@ -130,6 +130,29 @@ const DOF_BASE_BLUR = 8
 // (env.lightColor), applied in setEnvironment so the world's sun tints units
 // + scenery.  Add/edit a world by editing its JSON file — no code change.
 
+// healthBarThicknessPx sizes a world-anchored status bar's on-screen line
+// thickness (device pixels) from its PROJECTED length, so the bar keeps a
+// constant thickness:length aspect at any zoom.  The bar run is authored in
+// world units (it scales with the camera) while the stroke used to be a
+// fixed pixel width — so an extreme close-up stretched the run to hundreds
+// of pixels while the stroke stayed ~5 px, collapsing the bar to a hairline
+// that reads as a thin dark line.  Deriving the stroke from the projected
+// length instead keeps the bar reading as a bar from a hero close-up to a
+// wide shot.  focalY is the perspective projection's y focal term
+// (projMatrix[5] = 1/tan(fovY/2)); dist is the eye→bar distance.  Returns
+// device-pixel widths for the backing slab and the (thinner) fill run.
+export function healthBarThicknessPx(barLenWU, dist, focalY, viewportH) {
+  const d = Math.max(1e-3, dist || 0)
+  const f = focalY || 1
+  const pxPerWU = (f * (viewportH || 1) * 0.5) / d
+  const lenPx = Math.max(0, barLenWU || 0) * pxPerWU
+  // ~1:12.5 stroke:length, floored so distant bars stay legible and capped
+  // so a close-up doesn't balloon (the wire stroke is an O(width^2) jitter).
+  const backing = Math.max(4, Math.min(28, Math.round(lenPx * 0.08)))
+  const fill = Math.max(2, Math.min(backing, Math.round(backing * 0.6)))
+  return { backing, fill }
+}
+
 export class ModelRenderer {
   constructor({ canvas, textureCache, gl }) {
     this.canvas = canvas
@@ -5336,12 +5359,17 @@ export class ModelRenderer {
       const showBar = hp != null && hp < 1
       if (showBar) {
         const frac = Math.max(0, Math.min(1, hp))
+        // Stroke thickness tracks the bar's projected length so it keeps a
+        // constant aspect at any zoom (bias pulled the anchor toward the
+        // eye, so the rendered distance is eLen - bias).
+        const focalY = (this.camera.projMatrix && this.camera.projMatrix[5]) || 1
+        const px = healthBarThicknessPx(barW, eLen - bias, focalY, vh)
         // Backing slab, then the green→red fill on top.
-        seg(x0, y0, z0, x0 + rx * barW, y0 + ry * barW, z0 + rz * barW, [0, 0, 0], 0.6, 5)
+        seg(x0, y0, z0, x0 + rx * barW, y0 + ry * barW, z0 + rz * barW, [0, 0, 0], 0.6, px.backing)
         if (frac > 0.01) {
           const fill = [Math.min(1, 2 * (1 - frac)), Math.min(1, 2 * frac), 0.08]
           const fw = barW * frac
-          seg(x0, y0, z0, x0 + rx * fw, y0 + ry * fw, z0 + rz * fw, fill, 0.95, 3)
+          seg(x0, y0, z0, x0 + rx * fw, y0 + ry * fw, z0 + rz * fw, fill, 0.95, px.fill)
         }
       }
       // Veteran rank: a row of small gold STARS (a general's insignia)
