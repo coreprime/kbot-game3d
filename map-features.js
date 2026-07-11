@@ -1267,6 +1267,17 @@ function takFeatureSizeWU(def, key) {
 // unrecognised we fall back to classifying by the id so a feature literally
 // named "tree"/"bush"/"metal"/… still routes to the right family.
 export function categoryBuilder(category, nameHint = '') {
+  // Metal deposits: TA authors them as metal-named rock features (RockMetal1-4,
+  // WaterMetal…) whose category is `rocks`, so the generic rock read below would
+  // hijack them and draw a 3D boulder instead of a deposit. A metal-bearing name
+  // on a ground-scatter category routes to the flat metal-plate decal — the
+  // classic deposit baked into the floor. Metal *structures* (MetalTower is
+  // category=building) fall through and keep their built 3D read.
+  const catLo = String(category || '').toLowerCase()
+  if (/\bmetal/.test(String(nameHint || '').toLowerCase()) &&
+      (catLo === '' || catLo === 'rocks' || catLo === 'metal')) {
+    return buildMetalPatch
+  }
   const pick = (c) => {
     // Trees first: conifers vs broadleaf/deciduous.
     if (/tree|conifer|pine|fir|spruce/.test(c)) {
