@@ -1230,16 +1230,56 @@ export async function createWorld(canvas, {
     const placements = _reclaimedFeatureCells.size
       ? terrain.features.filter((f) => f && !_reclaimedFeatureCells.has(`${f.ax | 0},${f.ay | 0}`))
       : terrain.features
-    featureDefs().then((defs) => {
+    featureDefs().then(async (defs) => {
       if (disposed || token !== featureBuildToken) return
+      // Prefetch baked geometry for model3d-tier features present on this map
+      // (deduped by feature key) so buildFeatureField can bake the real 3D
+      // surrogate in place of a procedural stand-in.
+      const models3d = {}
+      if (assets && typeof assets.featureModel === 'function') {
+        const need = new Set()
+        for (const f of placements) {
+          if (!f || !f.name) continue
+          const d = defs[String(f.name).toLowerCase()]
+          if (d && d.tier === 'model3d' && d.model3d) need.add(String(f.name).toLowerCase())
+        }
+        await Promise.all([...need].map(async (key) => {
+          try {
+            const g = await assets.featureModel(defs[key].model3d)
+            if (g && Array.isArray(g.v)) models3d[key] = g
+          } catch { /* missing model → falls back to stand-in */ }
+        }))
+        if (disposed || token !== featureBuildToken) return
+      }
       const field = buildFeatureField({
         features: placements,
         defs,
+        models3d,
         heightAt: terrainHeightAt,
         cellWU: (terrain.cellWU || 16),
         style: game.featureStyle || null,
       })
       renderer.setMapFeatures(field.batches)
+      // Billboard-tier features: load each distinct sprite and stand them up.
+      if (Array.isArray(field.billboards) && field.billboards.length && assets && typeof assets.featureSprite === 'function') {
+        Promise.all(field.billboards.map(async (b) => {
+          try {
+            const raw = await assets.featureSprite(b.sprite || b.feature)
+            if (!raw) return null
+            const image = await toTexImageSource(raw)
+            return { image, instances: b.instances }
+          } catch {
+            return null
+          }
+        })).then((loaded) => {
+          if (disposed || token !== featureBuildToken) return
+          const ready = loaded.filter(Boolean)
+          if (ready.length) {
+            renderer.setFeatureBillboards(ready)
+            if (!renderer.running) world.step(0)
+          }
+        }).catch(() => { /* billboard sprites missing — stand-in already baked */ })
+      }
       if (Array.isArray(field.decals) && field.decals.length && assets && typeof assets.featureSprite === 'function') {
         Promise.all(field.decals.map(async (d) => {
           try {

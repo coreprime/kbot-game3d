@@ -20,6 +20,8 @@
 //   sounds/<stem>.wav         weaponbitmaps/<weapon>.json
 //   cursors/<sequence>.png    groundtiles/<tileset>.png
 //   unitpics/<name>.png       build pictures (formatVersion 3+)
+//   featuresprites/<id>.png   flat/decal/billboard feature GAF art (v6+)
+//   featuremodels/<key>.json  baked 3D-surrogate feature geometry (v9+)
 //   maps/<name>.json          (+ .tiles.png / .minimap.png)
 //
 // Filenames in a pack are lower-case with characters outside
@@ -261,5 +263,18 @@ export class HttpPackProvider {
     } catch {
       return null
     }
+  }
+
+  // featureModel resolves a model3d-tier feature's baked geometry
+  // (featuremodels/<assetkey>.json, formatVersion 9+) — flat-shaded,
+  // per-vertex-coloured, unit-height triangles the renderer scales and bakes
+  // into the map-feature batch as a 3D surrogate for the 2D feature. The
+  // argument is the entry's `model3d` path; null on a miss (older pack →
+  // the feature stays a procedural/decal/billboard stand-in).
+  async featureModel(pathOrKey) {
+    const rel = String(pathOrKey).includes('/')
+      ? String(pathOrKey)
+      : `featuremodels/${packStem(pathOrKey)}.json`
+    return this.fetchJson(rel, 'feature model', { optional: true })
   }
 }

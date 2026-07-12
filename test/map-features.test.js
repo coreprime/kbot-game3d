@@ -68,6 +68,56 @@ test('object features route to the model list, sprites to geometry', () => {
   assert.equal(field.counts.models, 1)
 })
 
+test('model3d tier bakes the asset geometry into the feature batch', () => {
+  // A minimal unit-height quad (two tris) with red vertices; normalised like
+  // build_feature_geom output (base y=0, centred XZ, unit height).
+  const q = [
+    -0.5, 0, 0, 0, 0, 1, 1, 0, 0, 0.5, 0, 0, 0, 0, 1, 1, 0, 0, 0.5, 1, 0, 0, 0, 1, 1, 0, 0,
+    -0.5, 0, 0, 0, 0, 1, 1, 0, 0, 0.5, 1, 0, 0, 0, 1, 1, 0, 0, -0.5, 1, 0, 0, 0, 1, 1, 0, 0,
+  ]
+  const defs = { spire1: { id: 'spire1', category: 'rocks', footprintX: 2, footprintZ: 2, heightWU: 60, tier: 'model3d', model3d: 'featuremodels/spire.json' } }
+  const models3d = { spire1: { h: 60, v: q, tris: 2 } }
+  const field = buildFeatureField({ features: [{ name: 'Spire1', ax: 4, ay: 4 }], defs, models3d, heightAt: () => 0 })
+  assert.equal(field.counts.placed, 1)
+  assert.equal(field.models.length, 0)           // baked into the batch, not the 3DO list
+  assert.equal(field.billboards.length, 0)
+  const data = Array.from(field.batches[0].data)
+  assert.equal(data.length, 6 * STRIDE)          // 2 tris baked
+  // scaled to the feature height: the top ring reaches ~heightWU above ground.
+  const ys = data.filter((_, i) => i % STRIDE === 1)
+  assert.ok(Math.max(...ys) > 55, `top near heightWU, got ${Math.max(...ys)}`)
+  // colour preserved from the asset (red).
+  assert.equal(data[6], 1); assert.equal(data[7], 0); assert.equal(data[8], 0)
+})
+
+test('model3d tier with no baked geometry falls back to a stand-in', () => {
+  const defs = { spire1: { id: 'spire1', category: 'rocks', footprintX: 2, footprintZ: 2, heightWU: 60, tier: 'model3d', model3d: 'featuremodels/spire.json' } }
+  const field = buildFeatureField({ features: [{ name: 'Spire1', ax: 4, ay: 4 }], defs, models3d: {}, heightAt: () => 0 })
+  assert.equal(field.counts.placed, 1)
+  assert.ok(field.batches[0].count > 0)          // procedural rock geometry, not empty
+})
+
+test('billboard tier collects upright sprite instances, grouped by sprite', () => {
+  const defs = { palm1: { id: 'palm1', category: 'trees', footprintX: 2, footprintZ: 2, heightWU: 80, tier: 'billboard', sprite: 'featuresprites/palm1.png' } }
+  const field = buildFeatureField({
+    features: [{ name: 'Palm1', ax: 4, ay: 4 }, { name: 'Palm1', ax: 9, ay: 9 }],
+    defs, heightAt: () => 0,
+  })
+  assert.equal(field.billboards.length, 1)       // one sprite group
+  assert.equal(field.billboards[0].sprite, 'featuresprites/palm1.png')
+  assert.equal(field.billboards[0].instances.length, 2)
+  assert.ok(field.billboards[0].instances[0].h > 0 && field.billboards[0].instances[0].w > 0)
+  assert.equal(field.batches.length, 0)          // no stand-in geometry for billboards
+})
+
+test('decal tier paints short scenery flat even off a flat-ground category', () => {
+  const defs = { pebble1: { id: 'pebble1', category: 'rocks', footprintX: 1, footprintZ: 1, heightWU: 6, tier: 'decal', sprite: 'featuresprites/pebble1.png' } }
+  const field = buildFeatureField({ features: [{ name: 'Pebble1', ax: 4, ay: 4 }], defs, heightAt: () => 0 })
+  assert.equal(field.decals.length, 1)           // routed to a ground decal despite category=rocks
+  assert.equal(field.decals[0].sprite, 'featuresprites/pebble1.png')
+  assert.equal(field.batches.length, 0)
+})
+
 test('placements land at their cell centres on the terrain surface', () => {
   const heightAt = (x, z) => 7 + x * 0 + z * 0
   const field = buildFeatureField({ features: [{ name: 'Rock4', ax: 4, ay: 6 }], defs: DEFS, heightAt })

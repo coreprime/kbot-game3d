@@ -2247,6 +2247,11 @@ export class ModelRenderer {
     if (this._featDecalBatches && this.featuresEnabled !== false) {
       this.#renderFeatureDecals()
     }
+    // Billboard-tier features: upright camera-facing sprite quads (drawn
+    // before units so they depth-occlude correctly).
+    if (this._featBillboards && this.featuresEnabled !== false) {
+      this.#renderFeatureBillboards()
+    }
 
     if (this.renderMode === 'wireframe') {
       this.#renderWireframe([0.85, 0.92, 1.0, 1.0])
@@ -4785,6 +4790,7 @@ export class ModelRenderer {
 
   clearMapFeatures() {
     this.clearFeatureDecals()
+    this.clearFeatureBillboards()
     if (!this._featBatches) return
     const gl = this.gl
     for (const b of this._featBatches) {
@@ -4985,6 +4991,132 @@ export class ModelRenderer {
     if (hasUV) gl.disableVertexAttribArray(this.aFeatDecalUV)
     if (gl.POLYGON_OFFSET_FILL !== undefined) gl.disable(gl.POLYGON_OFFSET_FILL)
     gl.depthMask(true)
+  }
+
+  // ── Feature billboards (tall unapproved scenery as upright sprites) ──
+  //
+  // setFeatureBillboards installs the billboard-tier features: for each
+  // distinct sprite, a list of world placements { x, y, z, w, h }.  Each is
+  // drawn as an upright, cylindrical camera-facing quad (yaws to the camera,
+  // stays vertical) textured with the feature's real GAF art, so tall scenery
+  // with no approved 3D model still stands up in the world.  Reuses the
+  // feature-decal shader; the quad geometry is rebuilt into a dynamic VBO only
+  // when the camera turns.
+  setFeatureBillboards(groups) {
+    this.clearFeatureBillboards()
+    if (!Array.isArray(groups) || !groups.length || !this.programFeatDecal) return
+    const gl = this.gl
+    const out = []
+    for (const g of groups) {
+      if (!g || !g.image || !Array.isArray(g.instances) || !g.instances.length) continue
+      const tex = gl.createTexture()
+      gl.bindTexture(gl.TEXTURE_2D, tex)
+      gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false)
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, g.image)
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
+      out.push({ tex, instances: g.instances, vbo: gl.createBuffer(),
+        count: g.instances.length * 6, data: new Float32Array(g.instances.length * 6 * 8) })
+    }
+    this._featBillboards = out.length ? out : null
+    this._featBillboardRight = null // force a geometry rebuild on first draw
+    this.requestRedraw()
+  }
+
+  clearFeatureBillboards() {
+    if (!this._featBillboards) return
+    const gl = this.gl
+    for (const b of this._featBillboards) {
+      try { gl.deleteBuffer(b.vbo) } catch { /* context loss */ }
+      try { gl.deleteTexture(b.tex) } catch { /* context loss */ }
+    }
+    this._featBillboards = null
+  }
+
+  // #buildBillboardGeom rebuilds every billboard's camera-facing quad for the
+  // current horizontal camera-right vector (up stays world +Y — a cylindrical
+  // billboard, so the sprite stays upright as the camera orbits).  UVs put the
+  // sprite's top row at the quad top; the normal points up so the overhead sun
+  // lights it like a decal.
+  #buildBillboardGeom(right) {
+    const gl = this.gl
+    const rx = right[0], rz = right[2]
+    for (const b of this._featBillboards) {
+      const d = b.data
+      let o = 0
+      for (const it of b.instances) {
+        const hw = it.w * 0.5
+        const lx = rx * hw, lz = rz * hw
+        const x0 = it.x - lx, z0 = it.z - lz
+        const x1 = it.x + lx, z1 = it.z + lz
+        const yb = it.y, yt = it.y + it.h
+        const put = (x, y, z, u, v) => {
+          d[o++] = x; d[o++] = y; d[o++] = z; d[o++] = 0; d[o++] = 1; d[o++] = 0; d[o++] = u; d[o++] = v
+        }
+        put(x0, yb, z0, 0, 1); put(x1, yb, z1, 1, 1); put(x1, yt, z1, 1, 0)
+        put(x0, yb, z0, 0, 1); put(x1, yt, z1, 1, 0); put(x0, yt, z0, 0, 0)
+      }
+      gl.bindBuffer(gl.ARRAY_BUFFER, b.vbo)
+      gl.bufferData(gl.ARRAY_BUFFER, b.data, gl.DYNAMIC_DRAW)
+    }
+  }
+
+  #renderFeatureBillboards() {
+    this._boundGeoVbo = null // this pass rebinds ARRAY_BUFFER + attribute pointers
+    const gl = this.gl
+    if (!this.programFeatDecal || !this.camera || !this._featBillboards) return
+    // Horizontal camera-right: right = cross(flattened forward, +Y).
+    const eye = this.camera.eye, tgt = this.camera.target
+    let fx = tgt[0] - eye[0], fz = tgt[2] - eye[2]
+    const fl = Math.hypot(fx, fz) || 1
+    fx /= fl; fz /= fl
+    const right = [-fz, 0, fx]
+    const prev = this._featBillboardRight
+    if (!prev || Math.abs(prev[0] - right[0]) > 1e-3 || Math.abs(prev[2] - right[2]) > 1e-3) {
+      this.#buildBillboardGeom(right)
+      this._featBillboardRight = right
+    }
+    gl.useProgram(this.programFeatDecal)
+    gl.uniformMatrix4fv(this.uFeatDecalProj, false, this.camera.projMatrix)
+    gl.uniformMatrix4fv(this.uFeatDecalView, false, this.camera.viewMatrix)
+    this.#setLogDepthFC(this.uFeatDecalLogDepthFC)
+    gl.uniform3fv(this.uFeatDecalLightDir, this.lightDir)
+    const _lc = this.lightColor || [1, 1, 1]
+    const _lm = Math.max(_lc[0], _lc[1], _lc[2], 1e-4)
+    gl.uniform3f(this.uFeatDecalSunTint, _lc[0] / _lm, _lc[1] / _lm, _lc[2] / _lm)
+    gl.uniform3fv(this.uFeatDecalHorizon, this.skyScheme.horizon)
+    gl.uniform3fv(this.uFeatDecalEyePos, this.camera.eye)
+    gl.uniform1f(this.uFeatDecalExposure, this.exposure ?? 1.0)
+    gl.uniform1f(this.uFeatDecalMapFog, this.mapFogEnabled ? 1 : 0)
+    this.#uploadPulseLights(gl, this.uFeatDecalPulsePos, this.uFeatDecalPulseColor, this.uFeatDecalPulseRange, this.uFeatDecalPulseCount)
+    gl.uniform1i(this.uFeatDecalSprite, 0)
+    // Alpha-blended, depth-tested AND depth-written so an upright sprite
+    // properly occludes units behind it (unlike the flush-on-ground decals).
+    gl.enable(gl.BLEND)
+    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA)
+    gl.enable(gl.DEPTH_TEST)
+    gl.depthFunc(gl.LEQUAL)
+    const stride = 8 * 4
+    const hasUV = this.aFeatDecalUV >= 0
+    for (const b of this._featBillboards) {
+      gl.activeTexture(gl.TEXTURE0)
+      gl.bindTexture(gl.TEXTURE_2D, b.tex)
+      gl.bindBuffer(gl.ARRAY_BUFFER, b.vbo)
+      gl.enableVertexAttribArray(this.aFeatDecalPos)
+      gl.vertexAttribPointer(this.aFeatDecalPos, 3, gl.FLOAT, false, stride, 0)
+      gl.enableVertexAttribArray(this.aFeatDecalNormal)
+      gl.vertexAttribPointer(this.aFeatDecalNormal, 3, gl.FLOAT, false, stride, 3 * 4)
+      if (hasUV) {
+        gl.enableVertexAttribArray(this.aFeatDecalUV)
+        gl.vertexAttribPointer(this.aFeatDecalUV, 2, gl.FLOAT, false, stride, 6 * 4)
+      }
+      gl.drawArrays(gl.TRIANGLES, 0, b.count)
+    }
+    gl.disableVertexAttribArray(this.aFeatDecalPos)
+    gl.disableVertexAttribArray(this.aFeatDecalNormal)
+    if (hasUV) gl.disableVertexAttribArray(this.aFeatDecalUV)
   }
 
   // ── Explosion meshes (additive emissive triangles) ─────────────────

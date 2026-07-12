@@ -1369,11 +1369,16 @@ export function featureSizeWU(def) {
 // shouldn't turn the particle pool into a fog machine.
 const MAX_FIELD_EMITTERS = 128
 
-export function buildFeatureField({ features, defs = {}, heightAt = null, cellWU = FEATURE_CELL_WU, style = null } = {}) {
+export function buildFeatureField({ features, defs = {}, models3d = {}, heightAt = null, cellWU = FEATURE_CELL_WU, style = null } = {}) {
   const tak = style === 'tak'
   const batches = []
   const models = []
   const emitters = []
+  // Billboard-tier features (tall scenery with no approved 3D model): collect
+  // upright camera-facing sprite quads, grouped by sprite path so each is one
+  // textured draw. Built into geometry by the renderer each frame (they face
+  // the camera), here we only record the placement + size.
+  const billboardGroups = new Map()
   // Sprite decals grouped by sprite path so each distinct feature art is
   // one textured draw — keyed by the sprite path, insertion order stable.
   const decalSinks = new Map()
@@ -1404,9 +1409,32 @@ export function buildFeatureField({ features, defs = {}, heightAt = null, cellWU
       continue
     }
     const { r, h } = tak ? takFeatureSizeWU(def, key) : featureSizeWU(def)
+    // model3d tier (approved sprite-replacement): bake the real 3D surrogate
+    // geometry into the feature batch in place of a procedural stand-in.
+    if (def && def.tier === 'model3d' && models3d[key]) {
+      sink.material(0, 0)
+      bakeFeatureModel(sink, rng, { x, y, z, h, geom: models3d[key] })
+      placed++
+      if (sink.verts >= MAX_BATCH_VERTS) flush()
+      continue
+    }
+    // billboard tier (tall scenery, no approved model): stand the real GAF
+    // sprite up as an upright camera-facing quad.
+    if (def && def.tier === 'billboard' && def.sprite) {
+      let bg = billboardGroups.get(def.sprite)
+      if (!bg) {
+        bg = { sprite: def.sprite, feature: key, instances: [] }
+        billboardGroups.set(def.sprite, bg)
+      }
+      bg.instances.push({ x, y, z, w: 2 * r, h })
+      placed++
+      continue
+    }
     // Flat ground feature WITH packed real sprite art → paint it as a
-    // texture-conforming decal instead of faking it with geometry.
-    if (def && def.sprite && (def.sacredSite > 0 || isFlatGroundCategory(def.category, key))) {
+    // texture-conforming decal instead of faking it with geometry. The decal
+    // tier (short scenery, <15 wu) opts in explicitly alongside the flat
+    // resource-site categories.
+    if (def && def.sprite && (def.tier === 'decal' || def.sacredSite > 0 || isFlatGroundCategory(def.category, key))) {
       let ds = decalSinks.get(def.sprite)
       if (!ds) {
         ds = { sprite: def.sprite, feature: key, sink: new DecalSink() }
@@ -1445,5 +1473,33 @@ export function buildFeatureField({ features, defs = {}, heightAt = null, cellWU
       decals.push({ sprite: ds.sprite, feature: ds.feature, data: new Float32Array(ds.sink.data), count: ds.sink.verts })
     }
   }
-  return { batches, decals, models, emitters, counts: { placed, decals: decals.length, models: models.length, skipped } }
+  const billboards = [...billboardGroups.values()].filter((b) => b.instances.length)
+  return { batches, decals, models, emitters, billboards, counts: { placed, decals: decals.length, models: models.length, billboards: billboards.length, skipped } }
+}
+
+// bakeFeatureModel transforms an approved asset's baked feature geometry
+// (build_feature_geom.py: normalised to base-at-0, centred XZ, unit height;
+// flat-shaded, per-vertex-coloured) into world-space triangles at a placement
+// and appends them to the feature batch. Scaled uniformly by the feature's
+// world height so the surrogate matches the authored silhouette; oriented by a
+// deterministic 90° step so repeats don't line up. Rides the existing
+// setMapFeatures/#renderFeatures path — no new shader.
+function bakeFeatureModel(sink, rng, { x, y, z, h, geom }) {
+  const v = geom && geom.v
+  if (!v || !v.length) return
+  const s = h || geom.h || 20
+  const ang = ((rng() * 4) | 0) * (Math.PI / 2)
+  const ca = Math.cos(ang), sa = Math.sin(ang)
+  // world vertex = placement + Rot_y(scale · local)
+  const wp = (o) => {
+    const lx = v[o] * s, ly = v[o + 1] * s, lz = v[o + 2] * s
+    return [x + lx * ca - lz * sa, y + ly, z + lx * sa + lz * ca]
+  }
+  for (let i = 0; i + 26 < v.length; i += 27) {
+    const a = wp(i), b = wp(i + 9), c = wp(i + 18)
+    const cA = [v[i + 6], v[i + 7], v[i + 8]]
+    const cB = [v[i + 15], v[i + 16], v[i + 17]]
+    const cC = [v[i + 24], v[i + 25], v[i + 26]]
+    sink.tri(a, b, c, cA, cA, cB, cC)
+  }
 }
