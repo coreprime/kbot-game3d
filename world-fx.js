@@ -655,15 +655,17 @@ export function damageSmokeIntervalMs(hp01) {
 // ── Nanolathe construction spray ──────────────────────────────────────
 
 // nanoPieceNames returns the builder model's nanolathe emitter piece names,
-// in model order.  TA construction models name their nano nozzles `nano1`,
-// `nano2`, … (a factory like ARMLAB has two; a con vehicle typically one),
-// and the unit's COB QueryNanoPiece ALTERNATES between them every call so the
-// real spray flickers across all of them — a single queried piece captures
-// only one nozzle, which is why a two-arm plant's stream looked half-missing.
-// Enumerating the model's `nano*` pieces lets the world spray from every
-// nozzle at once.  `names` is any iterable of piece names (Model.flat maps to
-// `p.name`); a bare `nano` (no digit) also counts.  De-duplicated, case-
-// insensitive, sorted by trailing index so nano1 precedes nano2.
+// in model order.  A factory like ARMLAB names its nozzles `nano1`, `nano2`;
+// a con vehicle typically one `nano`; and the leader hull names its arm
+// emitters `nanolath` / `nanospray` — every one begins with `nano`, so any
+// piece whose name STARTS with `nano` is an emitter.  Matching only the bare
+// `nano\d*` form missed the leader's `nanolath`/`nanospray` arm entirely, so
+// its stream fell back to the hull centre instead of flowing from the arm.
+// The unit's COB QueryNanoPiece ALTERNATES between multiple nozzles every
+// call, so a single queried piece captures only one — enumerating the model's
+// `nano*` pieces lets the world spray from every nozzle at once.  `names` is
+// any iterable of piece names (Model.flat maps to `p.name`).  De-duplicated,
+// case-insensitive, sorted by trailing index so nano1 precedes nano2.
 export function nanoPieceNames(names) {
   if (!names) return []
   const out = []
@@ -671,7 +673,7 @@ export function nanoPieceNames(names) {
   for (const raw of names) {
     if (raw == null) continue
     const nm = String(raw)
-    if (!/^nano\d*$/i.test(nm)) continue
+    if (!/^nano/i.test(nm)) continue
     const key = nm.toLowerCase()
     if (seen.has(key)) continue
     seen.add(key)
@@ -711,18 +713,26 @@ export const LATHE_CONE_HALF_ANGLE = 0.24          // ~14° half-angle
 // 120 wu con→structure span.  Speed is now derived from the span so travel
 // time stays bounded regardless of distance (a continuous jet, near or far),
 // with a floor so a point-blank build still reads as a moving stream.
-export const LATHE_CONE_SPEED = 150                // floor speed (wu/s)
+export const LATHE_CONE_SPEED = 65                 // floor speed (wu/s)
 // Target travel time nozzle→build: every mote crosses the whole span in about
 // this long, so the jet is continuous end to end at any range.  Speed scales
-// up from the floor to hit this on long spans.
-export const LATHE_CONE_TRAVEL_MS = 360
+// up from the floor to hit this on long spans.  Kept LONG (a gentle nano
+// drift, not a dart): at the old 360 ms a typical con→structure mote flew the
+// span at ~150 wu/s, and with a half-travel overshoot slack it shot well PAST
+// the build and — the nozzle sitting above the frame — plunged below grade,
+// where the ground depth-culled it.  The stream reached the pool but never
+// read on screen.  A slower crossing keeps the motes dense and on the visible
+// nozzle→build segment.
+export const LATHE_CONE_TRAVEL_MS = 700
 export const LATHE_CONE_SPEED_VAR = 0.35
-export const LATHE_CONE_SIZE_MIN = 2.6
-export const LATHE_CONE_SIZE_MAX = 5.0
+export const LATHE_CONE_SIZE_MIN = 3.0
+export const LATHE_CONE_SIZE_MAX = 6.0
 export const LATHE_CONE_TARGET_JITTER = 0.06
-// Extra fraction of travel time the mote lives past arrival so it decelerates
-// and fades ON the build rather than short of it.
-export const LATHE_CONE_LIFE_SLACK = 0.5
+// Extra fraction of travel time the mote lives past arrival so it fades a
+// touch ON the build rather than short of it.  Small: a large slack made the
+// mote overshoot the target by half the span and drop below the ground behind
+// the frame (invisible), instead of converging and fading on the build.
+export const LATHE_CONE_LIFE_SLACK = 0.12
 export const LATHE_CONE_LIFE_MIN_MS = 120
 // Ceiling high enough that a mote's life always covers the full crossing (the
 // jet reaches the target); the per-mote life is still the travel time + slack,

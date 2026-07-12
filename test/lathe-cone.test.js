@@ -196,6 +196,16 @@ test('a single-nozzle con builder enumerates its one nano piece', () => {
   assert.deepEqual(nanoPieceNames(['body', 'nano']), ['nano'])
 })
 
+test('the leader hull enumerates its nanolath / nanospray arm emitters', () => {
+  // The commander names its nanolathe emitters `nanolath` / `nanospray`, not a
+  // bare `nano\d*` — matching only that form missed them and the stream fell
+  // back to the hull centre instead of the arm.  Any `nano*` piece counts.
+  assert.deepEqual(
+    nanoPieceNames(['torso', 'ruparm', 'nanospray', 'lfirept', 'nanolath', 'head']),
+    ['nanospray', 'nanolath'],
+  )
+})
+
 test('nano enumeration is case-insensitive, de-duped and index-ordered', () => {
   assert.deepEqual(nanoPieceNames(['nano2', 'NANO1', 'nano2', 'turret']), ['NANO1', 'nano2'])
 })
